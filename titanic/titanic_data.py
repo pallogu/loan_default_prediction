@@ -4,8 +4,8 @@ import numpy as np
 from sklearn.feature_extraction.text import CountVectorizer
 
 
-train = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/train.csv')
-train['Age'].fillna(train['Age'].mean(), inplace=True)
+source = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/train.csv')
+source['Age'].fillna(source['Age'].mean(), inplace=True)
 
 def hasAlias(name):
     return True if "(" in name else False
@@ -13,35 +13,50 @@ def hasAlias(name):
 def getTitle(name):
     return name[name.find(",")+1:name.find(".")]
 
-train['Title'] = train.Name.apply(getTitle)
-train['Deck'] = train['Cabin'].astype(str).str[0]
-train['HasAlias'] = train.Name.apply(hasAlias)
+source['Title'] = source.Name.apply(getTitle)
+source['Deck'] = source['Cabin'].astype(str).str[0]
+source['HasAlias'] = source.Name.apply(hasAlias)
 
-countVectorizerMap =[
-    {'name':'Pclass', 'analyzer':'char'},
-    {'name': 'Sex', 'analyzer': 'word'},
-    {'name': 'Parch', 'analyzer': 'char'},
-    {'name': 'Embarked', 'analyzer': 'char'},
-    {'name': 'HasAlias', 'analyzer': 'word'},
-    {'name': 'Title', 'analyzer': 'word'},
-    {'name': 'Deck', 'analyzer': 'char'}
+categoryFeatures = [
+    'Pclass',
+    'Sex',
+    'Parch',
+    'Embarked',
+    'HasAlias',
+    'Title',
+    'Deck',
 ]
 
+numberFeatures = [
+    "Age", 
+    "SibSp", 
+    "Fare"
+]
 
-def _fitTransform(column):
-    vectorizer = CountVectorizer(analyzer=column['analyzer'], lowercase=False)
-    matrix = vectorizer.fit_transform(train[column['name']].apply(str)).todense()
-    return [ matrix, vectorizer ]
+train=source.sample(frac=0.8)
+test=source.drop(train.index)
 
+train_y = train['Survived'].values
+test_y = test['Survived'].values
 
-fields = [_fitTransform(x) for x in countVectorizerMap]
-categoryFeatures, vectorizers = zip(*fields)
-
-x = np.hstack([train.as_matrix(["Age", "SibSp", "Fare"]), np.hstack(list(categoryFeatures))])
-# x = np.hstack([train.as_matrix(["Age", "Fare"]), np.hstack(list(categoryFeatures))])
-
-# labelVectorizer = CountVectorizer(analyzer='char', lowercase=False)
-# y = labelVectorizer.fit_transform(train['Survived'].apply(str)).todense()
-y = train['Survived'].values
 def getTrainingSet():
-    return (x, y)
+    categories = {x: train[x].apply(str).values for x in  categoryFeatures}
+    numbers = {x: train[x].values for x in  numberFeatures}
+    return tf.data.Dataset.from_tensor_slices(({**categories, **numbers}, train_y))
+
+def getTestSet():
+    categories = {x: test[x].apply(str).values for x in  categoryFeatures}
+    numbers = {x: test[x].values for x in  numberFeatures}
+    return tf.data.Dataset.from_tensor_slices(({**categories, **numbers}, test_y))
+
+def getFeatureDefs():
+    categories = [tf.feature_column.indicator_column(tf.feature_column.categorical_column_with_vocabulary_list(
+        key = x,
+        vocabulary_list=source[x].apply(str).unique()
+    )) for x in categoryFeatures]
+
+    numbers = [tf.feature_column.numeric_column(
+        key = x
+    ) for x in numberFeatures]
+
+    return categories + numbers
