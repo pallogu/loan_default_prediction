@@ -5,7 +5,13 @@ from sklearn.feature_extraction.text import CountVectorizer
 
 
 source = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/train.csv')
+source_predict = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/test.csv')
+
+allData = pd.concat([source, source_predict], axis=0)
+dataSets = [source, source_predict]
+
 source['Age'].fillna(source['Age'].mean(), inplace=True)
+source_predict['Age'].fillna(source['Age'].mean(), inplace=True)
 
 def hasAlias(name):
     return True if "(" in name else False
@@ -13,23 +19,45 @@ def hasAlias(name):
 def getTitle(name):
     return name[name.find(",")+1:name.find(".")]
 
-source['Title'] = source.Name.apply(getTitle)
-source['Deck'] = source['Cabin'].astype(str).str[0]
-source['HasAlias'] = source.Name.apply(hasAlias)
+allData['Title'] = allData.Name.apply(getTitle)
+stat_min = 10 
+title_names = (allData['Title'].value_counts() < stat_min)
+
+for dataset in dataSets:
+    dataset['Age'].fillna(allData['Age'].mean(), inplace=True)
+    dataset['Embarked'].fillna(allData['Embarked'].mode()[0], inplace = True)
+    dataset['Fare'].fillna(allData['Fare'].mean(), inplace=True)
+    dataset['HasAlias'] = dataset.Name.apply(hasAlias)
+    dataset['Title'] = dataset.Name.apply(getTitle)
+    dataset['Title'] = dataset['Title'].apply(lambda x: 'Misc' if title_names.loc[x] == True else x)
+    dataset['Deck'] = dataset['Cabin'].astype(str).str[0]
+    dataset['FamilySize'] = dataset ['SibSp'] + dataset['Parch'] + 1
+    dataset['IsAlone'] = 1
+    dataset['IsAlone'].loc[dataset['FamilySize'] > 1] = 0
+
+ageMean = allData['Age'].mean()
+ageStd = allData['Age'].std()
+
+fareMean = allData['Fare'].mean()
+fareStd = allData['Fare'].std()
+
+for dataset in dataSets:
+    dataset['Age'] = (dataset['Age'] - ageMean)/ageStd
+    dataset['Fare'] = (dataset['Fare'] - fareMean)/fareStd
 
 categoryFeatures = [
     'Pclass',
     'Sex',
-    'Parch',
+    # 'Parch',
     'Embarked',
-    'HasAlias',
+    # 'HasAlias',
     'Title',
     'Deck',
+    'IsAlone'
 ]
 
 numberFeatures = [
-    "Age", 
-    "SibSp", 
+    "Age",
     "Fare"
 ]
 
@@ -48,6 +76,14 @@ def getTestSet():
     categories = {x: test[x].apply(str).values for x in  categoryFeatures}
     numbers = {x: test[x].values for x in  numberFeatures}
     return tf.data.Dataset.from_tensor_slices(({**categories, **numbers}, test_y))
+
+def getPredictSet():
+    categories = {x: source_predict[x].apply(str).values for x in  categoryFeatures}
+    numbers = {x: source_predict[x].values for x in  numberFeatures}
+    return tf.data.Dataset.from_tensor_slices(({**categories, **numbers}, {**categories, **numbers}))
+
+def getPreditIds():
+    return source_predict['PassengerId']
 
 def getFeatureDefs():
     categories = [tf.feature_column.indicator_column(tf.feature_column.categorical_column_with_vocabulary_list(
