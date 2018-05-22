@@ -2,7 +2,8 @@ import pandas as pd
 import tensorflow as tf
 import numpy as np
 from sklearn.feature_extraction.text import CountVectorizer
-
+import math
+from tensorflow.python.ops import resources
 
 source = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/train.csv')
 source_predict = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/test.csv')
@@ -91,8 +92,14 @@ def getFeatureDefs():
         vocabulary_list=source[x].apply(str).unique()
     )) for x in categoryFeatures]
 
-    numbers = [tf.feature_column.numeric_column(
-        key = x
-    ) for x in numberFeatures]
+    # numbers = [tf.feature_column.numeric_column(
+    #     key = x
+    # ) for x in numberFeatures]
 
-    return categories + numbers
+    age = tf.feature_column.numeric_column(key="Age")
+    age_bucket = tf.feature_column.bucketized_column(age, list(range(0,100, 5)))
+
+    fare = tf.feature_column.numeric_column(key="Fare")
+    fare_bucket = tf.feature_column.bucketized_column(fare, list(range(math.floor(allData['Fare'].min()), math.ceil(allData["Fare"].max()), 50)))
+
+    return categories + [age_bucket]
