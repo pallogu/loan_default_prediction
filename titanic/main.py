@@ -7,6 +7,7 @@ import tensorflow as tf
 import logging
 import pandas as pd
 
+
 import titanic_data
 
 parser = argparse.ArgumentParser()
@@ -27,6 +28,8 @@ def main(argv):
     args = parser.parse_args(argv[1:])
 
     # 'Adagrad', 'Adam', 'Ftrl', 'RMSProp', 'SGD'
+    randomForest = tf.contrib.tensor_forest.client.random_forest()
+
     estimator = tf.estimator.TensorForestEstimator(
         feature_columns=titanic_data.getFeatureDefs(),
         optimizer=tf.train.FtrlOptimizer(
