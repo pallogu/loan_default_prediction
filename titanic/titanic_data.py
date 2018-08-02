@@ -5,8 +5,10 @@ from sklearn.feature_extraction.text import CountVectorizer
 import math
 from tensorflow.python.ops import resources
 
-source = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/train.csv')
-source_predict = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/test.csv')
+# source = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/train.csv')
+source = pd.read_csv('//home/paul/dev/kaggle_competitions/titanic/data/train.csv')
+# source_predict = pd.read_csv('//Users/paul/Sites/kaggle_competitions/titanic/data/test.csv')
+source_predict = pd.read_csv('//home/paul/dev/kaggle_competitions/titanic/data/test.csv')
 
 allData = pd.concat([source, source_predict], axis=0)
 dataSets = [source, source_predict]
