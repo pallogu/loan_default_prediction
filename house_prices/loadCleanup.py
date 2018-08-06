@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 
-from sklearn.decomposition import PCA
+# from sklearn.decomposition import PCA
 
 train = pd.read_csv('./data/train.csv')
 test = pd.read_csv('./data/test.csv')
@@ -91,7 +91,8 @@ columnsToRemove=['Id',
                 'Fence',
                 'MiscFeature',
                 'Alley',
-                'FireplaceQu']
+                'FireplaceQu',
+                'SalePrice']
 
 
 def convertTimeColumnsToAgeColumns(train, test):
@@ -133,7 +134,7 @@ def dummies(train, test, columns=categoryColumns):
 
     return train, test       
 
-def removedUnused(train, test, columns=columnsToRemove):
+def removedUnusedColumns(train, test, columns=columnsToRemove):
     for column in columns:
         del train[column]
         del test[column]
@@ -143,15 +144,12 @@ def removedUnused(train, test, columns=columnsToRemove):
 def prepareTarget(data):
     return np.array(data.SalePrice, dtype='float64').reshape(-1, 1)
 
-def getTrainTestSet(trainingPhase):
+def getTrainTestSet():
       tr, te = convertTimeColumnsToAgeColumns(train, test)
       tr, te = fillCardinalNumericColumns(tr, te)
-      tr, te = removedUnused(tr, te)
+      tr, te = removedUnusedColumns(tr, te)
       tr, te = dummies(tr, te)
       return tr, te
 
-foo, bar = getTrainTestSet(True)
-
-pca = PCA()
-pca.fit(foo)
-print(pca.explained_variance_ratio_)
+foo, bar = getTrainTestSet()
+Y = 

@@ -102,5 +102,6 @@ ENV/
 
 .vscode/
 
-.DS_STORE/
-**/.DS_STORE/
+**/.DS_STORE
+titanic/lr/
+titanic/rm/
