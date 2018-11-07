@@ -1,10 +1,15 @@
 import pandas as pd
 import numpy as np
 
+import os
+cwd = os.getcwd()
+
+print(cwd)
+
 # from sklearn.decomposition import PCA
 
-train = pd.read_csv('./data/train.csv')
-test = pd.read_csv('./data/test.csv')
+train = pd.read_csv(cwd + '/house_prices/data/train.csv')
+test = pd.read_csv(cwd + '/house_prices/data/test.csv')
 
 cardinalNumericColumns = [
     'LotFrontage',
@@ -91,8 +96,7 @@ columnsToRemove=['Id',
                 'Fence',
                 'MiscFeature',
                 'Alley',
-                'FireplaceQu',
-                'SalePrice']
+                'FireplaceQu']
 
 
 def convertTimeColumnsToAgeColumns(train, test):
@@ -144,12 +148,9 @@ def removedUnusedColumns(train, test, columns=columnsToRemove):
 def prepareTarget(data):
     return np.array(data.SalePrice, dtype='float64').reshape(-1, 1)
 
-def getTrainTestSet():
+def getTrainTestDFs():
       tr, te = convertTimeColumnsToAgeColumns(train, test)
       tr, te = fillCardinalNumericColumns(tr, te)
       tr, te = removedUnusedColumns(tr, te)
       tr, te = dummies(tr, te)
       return tr, te
-
-foo, bar = getTrainTestSet()
-Y = 
