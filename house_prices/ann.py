@@ -13,32 +13,19 @@ class ANN(object):
         self.input_y = tf.placeholder(tf.float32, [None, 1], name="input_y")
 
         nn_arch = {
-            "w1": tf.Variable(tf.truncated_normal([self.numberOfFeatures, getLayerSize(self.numberOfFeatures / 2)], stddev=0.1), dtype=tf.float32),
-            # "w2": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 2), getLayerSize(self.numberOfFeatures / 4)], stddev=0.1), dtype=tf.float32),
-            "w2": tf.Variable(
-                tf.truncated_normal(
-                    [getLayerSize(self.numberOfFeatures / 2), 1],
-                    stddev=0.1
-                ), dtype=tf.float32),
-            # "w3": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 4), getLayerSize(self.numberOfFeatures / 8)], stddev=0.1), dtype=tf.float32),
-            # "w4": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 8), getLayerSize(self.numberOfFeatures / 16)], stddev=0.1), dtype=tf.float32),
-            # "wOut": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 16), 1], stddev=0.1), dtype=tf.float32),
-            "b1": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 2)], stddev=0.1), dtype=tf.float32),
-            # "b2": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 4)], stddev=0.1), dtype=tf.float32),
-            "b2": tf.Variable(tf.truncated_normal([1], stddev=0.1), dtype=tf.float32),
-            # "b3": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 8)], stddev=0.1), dtype=tf.float32),
-            # "b4": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 16)], stddev=0.1), dtype=tf.float32),
-            # "bOut": tf.Variable(tf.truncated_normal([1], stddev=0.1)),
+            "w1": tf.Variable(tf.truncated_normal([self.numberOfFeatures, getLayerSize(self.numberOfFeatures / 8)], stddev=0.1), dtype=tf.float32),
+            "w2": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 8), getLayerSize(self.numberOfFeatures / 16)], stddev=0.1), dtype=tf.float32),
+            "wOut": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 16), 1], stddev=0.1), dtype=tf.float32),
+            "b1": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 8)], stddev=0.1), dtype=tf.float32),
+            "b2": tf.Variable(tf.truncated_normal([getLayerSize(self.numberOfFeatures / 16)], stddev=0.1), dtype=tf.float32),
+            "bOut": tf.Variable(tf.truncated_normal([1], stddev=0.1)),
         }
 
         _reg_lambda = tf.constant(reg_lambda, dtype=tf.float32)
 
         l1 = tf.nn.relu(tf.nn.xw_plus_b(self.input_x, nn_arch["w1"], nn_arch["b1"]))
-        # l2 = tf.nn.relu(tf.nn.xw_plus_b(l1, nn_arch["w2"], nn_arch["b2"]))
-        # l3 = tf.nn.relu(tf.nn.xw_plus_b(l2, nn_arch["w3"], nn_arch["b3"]))
-        # l4 = tf.nn.relu(tf.nn.xw_plus_b(l3, nn_arch["w4"], nn_arch["b4"]))
-        # self.pred = tf.nn.xw_plus_b(l4, nn_arch["wOut"], nn_arch["bOut"])
-        self.pred = tf.nn.xw_plus_b(l1, nn_arch["w2"], nn_arch["b2"])
+        l2 = tf.nn.relu(tf.nn.xw_plus_b(l1, nn_arch["w2"], nn_arch["b2"]))
+        self.pred = tf.nn.xw_plus_b(l2, nn_arch["wOut"], nn_arch["bOut"])
 
         l2_loss = tf.constant(0.0, dtype=tf.float32)
         for key, value in nn_arch.items():
