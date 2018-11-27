@@ -1,5 +1,7 @@
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 
 import os
 cwd = os.getcwd()
@@ -8,9 +10,11 @@ print(cwd)
 
 # from sklearn.decomposition import PCA
 
-train = pd.read_csv(cwd + '/house_prices/data/train.csv')
-test = pd.read_csv(cwd + '/house_prices/data/test.csv')
+train = pd.read_csv(cwd + '/data/train.csv')
+unknown = pd.read_csv(cwd + '/data/test.csv')
 
+columnsToRemove = ['Id']
+classTypeNumericColumns = ['MSSubClass']
 cardinalNumericColumns = [
     'LotFrontage',
     'LotArea',
@@ -43,60 +47,62 @@ cardinalNumericColumns = [
     'PoolArea',
     'MiscVal'
 ]
+timeColumns = ['YearBuilt', 'YearRemodAdd', 'GarageYrBlt', 'MoSold', 'YrSold']
+valueColumn = 'SalePrice'
 
-categoryColumns = ['MSZoning',
- 'Street',
- 'LotShape',
- 'LandContour',
- 'Utilities',
- 'LotConfig',
- 'LandSlope',
- 'Neighborhood',
- 'Condition1',
- 'Condition2',
- 'BldgType',
- 'HouseStyle',
- 'RoofStyle',
- 'RoofMatl',
- 'Exterior1st',
- 'Exterior2nd',
- 'MasVnrType',
- 'ExterQual',
- 'ExterCond',
- 'Foundation',
- 'BsmtQual',
- 'BsmtCond',
- 'BsmtExposure',
- 'BsmtFinType1',
- 'BsmtFinType2',
- 'Heating',
- 'HeatingQC',
- 'CentralAir',
- 'Electrical',
- 'KitchenQual',
- 'Functional',
- 'GarageType',
- 'GarageFinish',
- 'GarageQual',
- 'GarageCond',
- 'PavedDrive',
- 'SaleType',
- 'SaleCondition',
- 'MSSubClass']
+train_Y = train[valueColumn]
+del train[valueColumn]
+
+lotFrontageBase = train.groupby(['LotConfig'])['LotFrontage']
 
 ageColumns = ['SaleMonth', 'AgeOfProperty', 'AgeOfRemodel', 'AgeOfGarage']
 
-columnsToRemove=['Id',
-                'YrSold',
-                'MoSold',
-                'YearBuilt',
-                'YearRemodAdd',
-                'GarageYrBlt',
-                'PoolQC',
-                'Fence',
-                'MiscFeature',
-                'Alley',
-                'FireplaceQu']
+columnsToRemove = columnsToRemove + ['YrSold', 'MoSold', 'YearBuilt', 'YearRemodAdd', 'GarageYrBlt']
+columnsToRemove = columnsToRemove + ["PoolQC", "Fence", "MiscFeature", "Alley", "FireplaceQu"]
+
+otherColumns = [key for key in dict(train.dtypes) if dict(train.dtypes)[key] not in ['int64', 'float64']]
+
+categoryColumns = [x for x in otherColumns if x not in columnsToRemove] + classTypeNumericColumns
+
+# categoryColumns = ['MSZoning',
+#  'Street',
+#  'LotShape',
+#  'LandContour',
+#  'Utilities',
+#  'LotConfig',
+#  'LandSlope',
+#  'Neighborhood',
+#  'Condition1',
+#  'Condition2',
+#  'BldgType',
+#  'HouseStyle',
+#  'RoofStyle',
+#  'RoofMatl',
+#  'Exterior1st',
+#  'Exterior2nd',
+#  'MasVnrType',
+#  'ExterQual',
+#  'ExterCond',
+#  'Foundation',
+#  'BsmtQual',
+#  'BsmtCond',
+#  'BsmtExposure',
+#  'BsmtFinType1',
+#  'BsmtFinType2',
+#  'Heating',
+#  'HeatingQC',
+#  'CentralAir',
+#  'Electrical',
+#  'KitchenQual',
+#  'Functional',
+#  'GarageType',
+#  'GarageFinish',
+#  'GarageQual',
+#  'GarageCond',
+#  'PavedDrive',
+#  'SaleType',
+#  'SaleCondition',
+#  'MSSubClass']
 
 
 def convertTimeColumnsToAgeColumns(train, test):
@@ -126,6 +132,11 @@ def fillCardinalNumericColumns(train, test):
             i[c].fillna(0, inplace=True)
     return train, test
 
+def scaleCardinalNumericColumns(train, test):
+    scaler = StandardScaler()
+    scaler.fit(train)
+    return scaler.transform(train), scaler.transform(test)
+
 def dummies(train, test, columns=categoryColumns):
     for column in columns:
         train[column] = train[column].apply(lambda x: str(x))
@@ -149,8 +160,12 @@ def prepareTarget(data):
     return np.array(data.SalePrice, dtype='float64').reshape(-1, 1)
 
 def getTrainTestDFs():
-      tr, te = convertTimeColumnsToAgeColumns(train, test)
-      tr, te = fillCardinalNumericColumns(tr, te)
-      tr, te = removedUnusedColumns(tr, te)
-      tr, te = dummies(tr, te)
-      return tr, te
+      tr, un = convertTimeColumnsToAgeColumns(train, unknown)
+      tr, un = fillCardinalNumericColumns(tr, un)
+      tr, un = removedUnusedColumns(tr, un)
+      tr, un = dummies(tr, un)
+      tr, un = scaleCardinalNumericColumns(tr, un)
+      return tr, un
+
+def getValueColumn():
+    return train_Y
