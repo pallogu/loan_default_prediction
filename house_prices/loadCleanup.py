@@ -114,6 +114,7 @@ def convertTimeColumnsToAgeColumns(train, test):
         i['AgeOfGarage'].fillna(i['AgeOfProperty'], inplace=True)
     return train, test
 
+
 def fillCardinalNumericColumns(train, test):
     for i in [train, test]:
         lotFrontageBase = i.groupby(['LotConfig'])['LotFrontage']
@@ -132,10 +133,12 @@ def fillCardinalNumericColumns(train, test):
             i[c].fillna(0, inplace=True)
     return train, test
 
+
 def scaleCardinalNumericColumns(train, test):
     scaler = StandardScaler()
     scaler.fit(train)
     return scaler.transform(train), scaler.transform(test)
+
 
 def dummies(train, test, columns=categoryColumns):
     for column in columns:
@@ -149,6 +152,7 @@ def dummies(train, test, columns=categoryColumns):
 
     return train, test       
 
+
 def removedUnusedColumns(train, test, columns=columnsToRemove):
     for column in columns:
         del train[column]
@@ -156,16 +160,26 @@ def removedUnusedColumns(train, test, columns=columnsToRemove):
 
     return train, test
 
+
 def prepareTarget(data):
     return np.array(data.SalePrice, dtype='float64').reshape(-1, 1)
 
+
+def separate_cardinal_categorical_input(train, test):
+    tr_car = train[cardinalNumericColumns]
+    test_car = test[cardinalNumericColumns]
+    tr_cat, test_cat = removedUnusedColumns(train, test, columns=cardinalNumericColumns)
+    return tr_car, tr_cat, test_car, test_cat
+
+
 def getTrainTestDFs():
-      tr, un = convertTimeColumnsToAgeColumns(train, unknown)
-      tr, un = fillCardinalNumericColumns(tr, un)
-      tr, un = removedUnusedColumns(tr, un)
-      tr, un = dummies(tr, un)
-      tr, un = scaleCardinalNumericColumns(tr, un)
-      return tr, un
+    tr, un = convertTimeColumnsToAgeColumns(train, unknown)
+    tr, un = fillCardinalNumericColumns(tr, un)
+    tr, un = removedUnusedColumns(tr, un)
+    tr, un = dummies(tr, un)
+    # tr, un = scaleCardinalNumericColumns(tr, un)
+    tr_car, tr_cat, un_car, un_cat = separate_cardinal_categorical_input(tr, un)
+    return tr_car, tr_cat, un_car, un_cat
 
 def getValueColumn():
     return train_Y
