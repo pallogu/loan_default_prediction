@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+.DS_Store
+credit_default/data/
 # C extensions
 *.so
 
