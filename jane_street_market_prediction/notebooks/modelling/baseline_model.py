@@ -22,71 +22,65 @@ class RandomPolicyAgent():
 
 random_policy_agent = RandomPolicyAgent()
 
+
+# +
+class AlwaysBuyAgent():
+    def policy(self, features):
+        return 1
+
+always_buy_agent = AlwaysBuyAgent()
+
 # -
 
+temp = pd.DataFrame(data=[
+    {
+        "date": 0,
+        "weight": 1,
+        "resp": 1
+    },
+    {
+        "date": 0,
+        "weight": 1,
+        "resp": 2
+    },
+    {
+        "date": 1,
+        "weight": 1,
+        "resp": 1
+    }
+], columns=["date", "trade_reward"])
 
 
 def evaluate_policy(agent, valuation_data, feats):
     t = time.localtime()
     current_time = time.strftime("%H:%M:%S", t)
-    print(current_time)
-    print("evaluating policy")
-    valuation = {}
+    print("start_time", current_time)
+    val_data = valuation_data.copy()
     
-    
-    def valuation_data_gen(valuation_data):
-        counter = 0
-        while counter < valuation_data.shape[0]:
-            yield valuation_data.iloc[counter]
-            counter += 1
+    val_data["action"] = val_data[feats].apply(lambda row: agent.policy(row), axis=1)
+    val_data["trade_reward"] = val_data["action"]*val_data["weight"]*val_data["resp"]
+    val_data["trade_reward_squared"] = val_data["trade_reward"]*val_data["trade_reward"]
 
-    gen = valuation_data_gen(valuation_data)
-    
-    for observation  in gen:
-        obser_feat = observation[feats]
-        reward = observation["resp"]
-        weight = observation["weight"]
-        date = observation["date"]
-        action = agent.policy(feats)
+    tmp = val_data.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
         
-        try:
-            valuation[date]
-        except KeyError:
-            valuation[date] = 0
-
-        valuation[date] += reward*action*weight
+    sum_of_pi = tmp["trade_reward"].sum()
+    sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
         
-    sum_of_pi = 0
-    sum_of_pi_x_pi = 0
-    
-    for value in valuation.values():
-        sum_of_pi += value
-        sum_of_pi_x_pi += value*value
-        
-    t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/len(valuation.values()))
+    t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
     
     u  = np.max([np.min([t, 0]), 6]) * sum_of_pi
     
     t = time.localtime()
     current_time = time.strftime("%H:%M:%S", t)
-    print(current_time)
-    print("evaluating policy")
+    print("end_time", current_time)
         
     return u
-
-evaluate_policy(random_policy_agent, valuation_data, feats)
 
 
 # +
 def run_experiment(number_of_iterations, agent):
     
-#     pool = mp.Pool(mp.cpu_count() -1 )
-    
-#     valuations = [pool.apply(evaluate_policy, args=(agent, valuation_data, feats)) for i in range(number_of_iterations)]
-
     valuations = [evaluate_policy(agent, valuation_data, feats) for i in range(number_of_iterations)]
-
-#     pool.close()
     
     with mlflow.start_run():
         
@@ -104,7 +98,7 @@ def run_experiment(number_of_iterations, agent):
 
     return mean, std_dev
 
-run_experiment(100, random_policy_agent)
+run_experiment(1000, random_policy_agent)
 # -
 
 
