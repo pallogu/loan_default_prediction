@@ -1,5 +1,6 @@
 import pandas as pd
 from sklearn.decomposition import PCA
+import numpy as np
 
 train = pd.read_csv("../../input/train.csv")
 
@@ -97,6 +98,21 @@ train_etl = ETL(initial_row=train.mean(), mean = train.mean(), stddev=train.std(
 # %%time
 train_trans  = train.apply(train_etl.transform, axis=1)
 
-train_trans
+train_trans[feats]
+
+pca = PCA(n_components=0.95)
+
+pca.fit(train_trans[feats].values)
+
+pca.n_components_
+
+train_trans[feats].iloc[0].values.reshape(1, -1)
+
+output = pca.transform(train_trans[feats].iloc[0].values.reshape(1, -1))
+
+np.matmul(pca.components_, train_trans[feats].iloc[0].values)
+
+
+output
 
 
