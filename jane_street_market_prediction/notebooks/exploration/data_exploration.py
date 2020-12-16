@@ -3,8 +3,14 @@ from pandas_profiling import ProfileReport
 import pickle
 
 
-train = pd.read_csv("../../data/raw/jane-street-market-prediction/train.csv")
-features = pd.read_csv("../../data/raw/jane-street-market-prediction/features.csv")
+train = pd.read_csv("../../input/train.csv")
+features = pd.read_csv("../../input/features.csv")
+
+test = pd.read_csv("../../input/example_test.csv")
+
+test.head()
+
+
 
 train.info()
 
