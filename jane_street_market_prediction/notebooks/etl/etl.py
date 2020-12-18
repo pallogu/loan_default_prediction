@@ -5,12 +5,8 @@ import pickle
 
 train = pd.read_csv("../../input/train.csv")
 
-# +
-
-
 valuation_data = train[train["date"] >=400]
 train = train[train["date"] < 400]
-# -
 
 feats = ["feature_{count}".format(count = count) for count in range(1, 130)]
 rest_cols = [column for column in train.columns if column not in feats]
@@ -43,7 +39,6 @@ class ETL_1():
         self.fillna(row)
         self.normalise(row)
         return row
-    
 
 
 class ETL_2():
@@ -105,12 +100,10 @@ train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
 
 with open("./etl_1.pkl", "wb") as f:
     pickle.dump(etl_1, f)
-    
+
 
 with open("./etl_2.pkl", "wb") as f:
     pickle.dump(etl_2, f)
-
-
 
 val_trans_1 = valuation_data.apply(etl_1.fillna_normalize, axis=1)
 
