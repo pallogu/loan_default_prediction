@@ -1,8 +1,16 @@
 import pandas as pd
 from sklearn.decomposition import PCA
 import numpy as np
+import pickle
 
 train = pd.read_csv("../../input/train.csv")
+
+# +
+
+
+valuation_data = train[train["date"] >=400]
+train = train[train["date"] < 400]
+# -
 
 feats = ["feature_{count}".format(count = count) for count in range(1, 130)]
 rest_cols = [column for column in train.columns if column not in feats]
@@ -11,7 +19,6 @@ train_mean = train.mean()
 train_stddev = train.std()
 
 
-# +
 class ETL_1():
     def __init__(self, **kwargs):
         self.past_row = kwargs.get("initial_row")
@@ -39,7 +46,6 @@ class ETL_1():
     
 
 
-# +
 class ETL_2():
     def __init__(self, **kwargs):
         self.columns_to_transform = kwargs.get("columns_to_transform")
@@ -68,9 +74,7 @@ class ETL_2():
         row_trans = pd.concat([to_keep, pca_transformed])
         
         return row_trans
-    
 
-# -
 
 etl_1 = ETL_1(
     initial_row=train_mean,
@@ -96,6 +100,25 @@ etl_2 = ETL_2(
 train_trans_2  = train_trans_1.apply(etl_2.reduce_columns_train, axis=1)
 
 train_trans_2
+
+train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
+
+with open("./etl_1.pkl", "wb") as f:
+    pickle.dump(etl_1, f)
+    
+
+with open("./etl_2.pkl", "wb") as f:
+    pickle.dump(etl_2, f)
+
+
+
+val_trans_1 = valuation_data.apply(etl_1.fillna_normalize, axis=1)
+
+val_trans_2 = val_trans_1.apply(etl_2.reduce_columns_train, axis=1)
+
+val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
+
+
 
 # +
 # %%time
@@ -152,3 +175,6 @@ etl = ETL(
 )
 
 test_df.apply(etl.transform, axis=1)
+# -
+
+
