@@ -210,8 +210,6 @@ def run_experiment():
         
         agent.train_step_counter.assign(0)
         
-        mlflow.log_metric("u_metric", calculate_u_metric(val_env, agent.policy))
-        
         for _ in range(num_iterations):
             collect_data(train_env, agent.collect_policy, replay_buffer, collect_steps_per_iteration)
             
@@ -219,8 +217,11 @@ def run_experiment():
             
             train_loss = agent.train(experience).loss
             
-            if step % log_interval == 0:
-                mlflow.log_metric("loss", train_loss)
+            step = agent.train_step_counter.numpy()
+                        
+            if (step - 1) % log_interval == 0:
+                
+                mlflow.log_metric("loss", train_loss.numpy())
                 
             if _ % eval_interval == 0:
                 mlflow.log_metric("u_metric", calculate_u_metric(val_env, agent.policy))
