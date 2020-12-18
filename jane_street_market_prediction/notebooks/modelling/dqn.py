@@ -26,45 +26,67 @@ from tf_agents.utils import common
 
 import pandas as pd
 
+import mlflow
+
+import time
+
 # -
 
-# Hyperparameters
+# ### Environment
+#
+
+from environment import MarketEnv
+
+train = pd.read_csv("../etl/train_dataset_after_pca.csv")
+eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
+
+eval_df = eval_df[eval_df["date"] < 420]
+
+eval_df.shape
 
 # +
-num_iterations = 30000
+train_py_env = MarketEnv(
+    trades = train,
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    reward_column = "resp",
+    weight_column = "weight"    
+)
+
+val_py_env = MarketEnv(
+    trades = eval_df,
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    reward_column = "resp",
+    weight_column = "weight"    
+)
+# -
+
+train_env = tf_py_environment.TFPyEnvironment(train_py_env)
+val_env = tf_py_environment.TFPyEnvironment(val_py_env)
+
+# ### Hyperparameters
+
+train.shape[0]
+
+# +
+num_iterations = train.shape[0]
 
 initial_collect_steps = 100
 collect_steps_per_iteration = 1
-replay_buffer_max_length = 100000000
+replay_buffer_max_length = num_iterations*2
 
 batch_size = 64
 learning_rate = 1e-3
 log_interval = 200
 
 num_eval_episodes = 10
-eval_interval = 1000
+eval_interval = np.floor(num_iterations / 100)
 # -
 
-# Environment
-#
-
-from environment import MarketEnv
-
-train = pd.read_csv("../etl/train_dataset_after_pca.csv")
-
-train_py_env = MarketEnv(
-    trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)],
-    reward_column = "resp",
-    weight_column = "weight"    
-)
-
-train_env = tf_py_environment.TFPyEnvironment(train_py_env)
-
-# Agent
+# ### Agent
 
 # +
-fc_layer_params = (20,)
+num_act_units = 128
+fc_layer_params = (num_act_units,)
 
 q_net = q_network.QNetwork(
     train_env.observation_spec(),
@@ -86,5 +108,125 @@ agent = dqn_agent.DqnAgent(
 
 agent.initialize()
 # -
+
+# ### Replay buffer and initial data collection
+
+replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+    data_spec = agent.collect_data_spec,
+    batch_size = train_env.batch_size,
+    max_length = replay_buffer_max_length
+)
+
+random_policy = random_tf_policy.RandomTFPolicy(train_env.time_step_spec(), train_env.action_spec())
+
+
+def collect_data(env, policy, buffer, steps):
+    for i in range(steps):
+        time_step = env.current_time_step()
+        action_step = policy.action(time_step)
+        next_time_step = env.step(action_step.action)
+        buffer.add_batch(
+            trajectory.from_transition(
+                time_step,
+                action_step,
+                next_time_step
+            )
+        )
+
+
+collect_data(train_env, random_policy, replay_buffer, initial_collect_steps)
+
+dataset = replay_buffer.as_dataset(
+    num_parallel_calls = -1,
+    sample_batch_size = batch_size,
+    num_steps = 2
+).prefetch(3)
+
+iterator = iter(dataset)
+
+
+# ### Metrics and Evaluation
+
+def calculate_u_metric(env, policy):
+    print("evaluating policy")
+  
+    time_step = env.reset()
+    
+    actions = np.array([])
+    
+    counter = 0
+    t = time.localtime()
+    current_time = time.strftime("%H:%M:%S", t)
+    print("start_time", current_time)
+    
+    while not time_step.is_last():
+        action_step = agent.policy.action(time_step)
+        actions = np.concatenate((actions, action_step.action.numpy()))
+        
+        time_step = env.step(action_step.action)
+        
+        counter += 1
+        
+        if counter % 10000 ==0 :
+            print(counter)
+            t = time.localtime()
+            current_time = time.strftime("%H:%M:%S", t)
+            print("cycle_time", current_time)
+            
+    action_step = agent.policy.action(time_step)
+    actions = np.concatenate((actions, action_step.action.numpy()))
+            
+    eval_df["action"] = pd.Series(data=actions, index = eval_df.index)
+    eval_df["trade_reward"] = eval_df["action"]*eval_df["weight"]*eval_df["resp"]
+    eval_df["trade_reward_squared"] = eval_df["trade_reward"]*eval_df["trade_reward"]
+
+    tmp = eval_df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+        
+    sum_of_pi = tmp["trade_reward"].sum()
+    sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
+        
+    t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
+    
+    u  = np.max([np.min([t, 0]), 6]) * sum_of_pi
+    
+    print("finished evaluating policy")
+            
+    return u
+
+
+# ### Training the agent
+
+def run_experiment():
+    with mlflow.start_run():
+        mlflow.set_tag("agent_type", "dqn")
+        mlflow.log_param("num_act_units", num_act_units)
+        mlflow.log_param("num_iterations", num_iterations)
+        mlflow.log_param("initial_collect_steps", initial_collect_steps)
+        mlflow.log_param("batch_size", batch_size)
+        mlflow.log_param("learning_rate", learning_rate)
+        mlflow.set_tag("data_set", "initial_dataset_after_pca")
+        
+        agent.train = common.function(agent.train)
+        
+        agent.train_step_counter.assign(0)
+        
+        mlflow.log_metric("u_metric", calculate_u_metric(val_env, agent.policy))
+        
+        for _ in range(num_iterations):
+            collect_data(train_env, agent.collect_policy, replay_buffer, collect_steps_per_iteration)
+            
+            experience, unused_info = next(iterator)
+            
+            train_loss = agent.train(experience).loss
+            
+            if step % log_interval == 0:
+                mlflow.log_metric("loss", train_loss)
+                
+            if _ % eval_interval == 0:
+                mlflow.log_metric("u_metric", calculate_u_metric(val_env, agent.policy))
+
+
+# %%time
+run_experiment()
 
 

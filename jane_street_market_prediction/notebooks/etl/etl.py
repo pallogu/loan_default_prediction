@@ -118,7 +118,8 @@ val_trans_2 = val_trans_1.apply(etl_2.reduce_columns_train, axis=1)
 
 val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
 
-
+val_trans_2[val_trans_2["date"] < 420
+           ].shape
 
 # +
 # %%time
