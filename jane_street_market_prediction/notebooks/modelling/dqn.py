@@ -32,6 +32,8 @@ import time
 
 # -
 
+from tf_agents.policies.policy_saver import PolicySaver
+
 # ### Environment
 #
 
@@ -45,18 +47,22 @@ eval_df = eval_df[eval_df["date"] < 420]
 eval_df.shape
 
 # +
+discount = 0.72
+
 train_py_env = MarketEnv(
     trades = train,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
-    weight_column = "weight"    
+    weight_column = "weight",
+    discount=discount
 )
 
 val_py_env = MarketEnv(
     trades = eval_df,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
-    weight_column = "weight"    
+    weight_column = "weight",
+    discount=discount
 )
 # -
 
@@ -65,28 +71,25 @@ val_env = tf_py_environment.TFPyEnvironment(val_py_env)
 
 # ### Hyperparameters
 
-train.shape[0]
-
 # +
-num_iterations = train.shape[0]
+num_iterations = train.shape[0]*2
 
 initial_collect_steps = 100
 collect_steps_per_iteration = 1
 replay_buffer_max_length = num_iterations*2
 
-batch_size = 64
-learning_rate = 1e-3
-log_interval = 200
+batch_size = 128
+learning_rate = 5e-7
+log_interval = np.floor(num_iterations / 1000)
 
 num_eval_episodes = 10
-eval_interval = np.floor(num_iterations / 100)
+eval_interval = np.floor(num_iterations / 50)
 # -
 
 # ### Agent
 
 # +
-num_act_units = 128
-fc_layer_params = (num_act_units,)
+fc_layer_params = (128, 128, 64,)
 
 q_net = q_network.QNetwork(
     train_env.observation_spec(),
@@ -199,12 +202,14 @@ def calculate_u_metric(env, policy):
 def run_experiment():
     with mlflow.start_run():
         mlflow.set_tag("agent_type", "dqn")
-        mlflow.log_param("num_act_units", num_act_units)
+        mlflow.log_param("num_act_units", fc_layer_params)
         mlflow.log_param("num_iterations", num_iterations)
         mlflow.log_param("initial_collect_steps", initial_collect_steps)
         mlflow.log_param("batch_size", batch_size)
         mlflow.log_param("learning_rate", learning_rate)
         mlflow.set_tag("data_set", "initial_dataset_after_pca")
+        mlflow.log_param("discount", discount)
+        mlflow.log_param("run", 1)
         
         agent.train = common.function(agent.train)
         
@@ -220,7 +225,7 @@ def run_experiment():
             step = agent.train_step_counter.numpy()
                         
             if (step - 1) % log_interval == 0:
-                
+                print("step: ", step)
                 mlflow.log_metric("loss", train_loss.numpy())
                 
             if _ % eval_interval == 0:
@@ -229,5 +234,9 @@ def run_experiment():
 
 # %%time
 run_experiment()
+
+saver = PolicySaver(agent.policy, batch_size=None)
+
+saver.save("model_dqn_128_128_072.policy")
 
 
