@@ -47,7 +47,7 @@ eval_df = eval_df[eval_df["date"] < 420]
 eval_df.shape
 
 # +
-discount = 0.72
+discount = 0.78
 
 train_py_env = MarketEnv(
     trades = train,
@@ -79,7 +79,7 @@ collect_steps_per_iteration = 1
 replay_buffer_max_length = num_iterations*2
 
 batch_size = 128
-learning_rate = 5e-7
+learning_rate = 1e-7
 log_interval = np.floor(num_iterations / 1000)
 
 num_eval_episodes = 10
@@ -237,6 +237,8 @@ run_experiment()
 
 saver = PolicySaver(agent.policy, batch_size=None)
 
-saver.save("model_dqn_128_128_072.policy")
+saver.save("model_dqn_128_128_078.policy")
+
+val_env.reset()
 
 
