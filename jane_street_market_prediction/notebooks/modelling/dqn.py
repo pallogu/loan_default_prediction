@@ -162,7 +162,7 @@ def calculate_u_metric(env, policy):
     current_time = time.strftime("%H:%M:%S", t)
     print("start_time", current_time)
     
-    while not time_step.is_last():
+    while npau00.is_last():
         action_step = agent.policy.action(time_step)
         actions = np.concatenate((actions, action_step.action.numpy()))
         

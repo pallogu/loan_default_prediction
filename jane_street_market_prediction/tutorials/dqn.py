@@ -46,31 +46,36 @@ eval_interval = 1000  # @param {type:"integer"}
 # ## Environment
 
 env_name = 'CartPole-v0'
-env = suite_gym.load(env_name)
+# env = suite_gym.load(env_name)
 
-
-env.reset()
-
-print('Observation Spec:')
-print(env.time_step_spec().observation)
-
-print('Reward Spec:')
-print(env.time_step_spec().reward)
-
-print('Action Spec:')
-print(env.action_spec())
-
-
-time_step = env.reset()
-print('Time step:')
-print(time_step)
 
 # +
-action = np.array(1, dtype=np.int32)
+# env.reset()
 
-next_time_step = env.step(action)
-print('Next time step:')
-print(next_time_step)
+# +
+# print('Observation Spec:')
+# print(env.time_step_spec().observation)
+
+# +
+# print('Reward Spec:')
+# print(env.time_step_spec().reward)
+
+# +
+# print('Action Spec:')
+# print(env.action_spec())
+
+
+# +
+# time_step = env.reset()
+# print('Time step:')
+# print(time_step)
+
+# +
+# action = np.array(1, dtype=np.int32)
+
+# next_time_step = env.step(action)
+# print('Next time step:')
+# print(next_time_step)
 
 # +
 train_py_env = suite_gym.load(env_name)
@@ -105,24 +110,26 @@ agent = dqn_agent.DqnAgent(
     train_step_counter=train_step_counter)
 
 agent.initialize()
+
+# +
+# eval_policy = agent.policy
+# collect_policy = agent.collect_policy
 # -
 
-eval_policy = agent.policy
-collect_policy = agent.collect_policy
-
-random_policy = random_tf_policy.RandomTFPolicy(train_env.time_step_spec(),
-                                                train_env.action_spec())
+random_policy = random_tf_policy.RandomTFPolicy(train_env.time_step_spec(),train_env.action_spec())
 
 
-example_environment = tf_py_environment.TFPyEnvironment(
-    suite_gym.load('CartPole-v0'))
+# +
+# example_environment = tf_py_environment.TFPyEnvironment(suite_gym.load('CartPole-v0'))
 
 
-time_step = example_environment.reset()
+# +
+# time_step = example_environment.reset()
 
 
-random_policy.action(time_step)
-
+# +
+# random_policy.action(time_step)
+# -
 
 # ### Metrics and Evaluation
 
@@ -143,8 +150,9 @@ def compute_avg_return(environment, policy, num_episodes=10):
     avg_return = total_return / num_episodes
     return avg_return.numpy()[0]
 
-
-compute_avg_return(eval_env, random_policy, num_eval_episodes)
+# +
+# compute_avg_return(eval_env, random_policy, num_eval_episodes)
+# -
 
 
 # ### Replay Buffer
@@ -154,13 +162,16 @@ replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
     batch_size=train_env.batch_size,
     max_length=replay_buffer_max_length)
 
-agent.collect_data_spec
+# +
+# agent.collect_data_spec
 
 
-agent.collect_data_spec._fields
+# +
+# agent.collect_data_spec._fields
 
-agent.collect_data_spec._fields
-
+# +
+# agent.collect_data_spec._fields
+# -
 
 # ### Data Collection
 
@@ -187,7 +198,7 @@ dataset = replay_buffer.as_dataset(
     num_steps=2).prefetch(3)
 
 
-dataset
+# dataset
 # -
 
 iterator = iter(dataset)

@@ -1,7 +1,11 @@
+# +
 import pandas as pd
 from sklearn.decomposition import PCA
 import numpy as np
 import pickle
+
+from ETL import ETL_1, ETL_2
+# -
 
 train = pd.read_csv("../../input/train.csv")
 
@@ -13,63 +17,6 @@ rest_cols = [column for column in train.columns if column not in feats]
 
 train_mean = train.mean()
 train_stddev = train.std()
-
-
-class ETL_1():
-    def __init__(self, **kwargs):
-        self.past_row = kwargs.get("initial_row")
-        self.columns_to_transform = kwargs.get("columns_to_transform")
-        self.mean = kwargs.get("mean")
-        self.stddev = kwargs.get("stddev")
-        
-    def fillna(self, row):
-        missing_value_columns = row.loc[row.isnull()].index
-        if len(missing_value_columns):
-            row[missing_value_columns] = self.past_row[missing_value_columns]
-        self.past_row = row.copy()
-        return row
-    
-    def normalise(self, row):
-        cols = self.columns_to_transform
-        row[cols] = (row[cols]-self.mean[cols])/self.stddev[cols]
-        return row
-    
-    
-    def fillna_normalize(self, row):
-        self.fillna(row)
-        self.normalise(row)
-        return row
-
-
-class ETL_2():
-    def __init__(self, **kwargs):
-        self.columns_to_transform = kwargs.get("columns_to_transform")
-        self.trans_cols_names = kwargs.get("trans_cols_names")
-        self.columns_to_keep_train = kwargs.get("columns_to_keep_train")
-        self.columns_to_keep = kwargs.get("columns_to_keep")
-        self.pca = kwargs.get("pca")
-    
-    def pca_transform(self, row):
-        cols = self.columns_to_transform
-        row_trans = self.pca.transform(row[cols].values.reshape(1, -1))
-        return pd.Series(row_trans[0], index=self.trans_cols_names)
-        
-    def reduce_columns_train(self, row):
-        to_keep = row[self.columns_to_keep_train]
-        pca_transformed = self.pca_transform(row)
-
-        row_trans = pd.concat([to_keep, pca_transformed])
-        
-        return row_trans
-    
-    def reduce_columns(self, row):
-        to_keep = row[self.columns_to_keep]
-        pca_transformed = self.pca_transform(row)
-
-        row_trans = pd.concat([to_keep, pca_transformed])
-        
-        return row_trans
-
 
 etl_1 = ETL_1(
     initial_row=train_mean,
@@ -87,7 +34,7 @@ pca.fit(train_trans_1[feats].values)
 etl_2 = ETL_2(
     columns_to_transform=feats,
     trans_cols_names= ["f_{i}".format(i=i) for i in range(40)],
-    columns_to_keep_train = rest_cols,
+    columns_to_keep_train = ['date', 'weight'],
     pca = pca
 )
 
@@ -100,10 +47,12 @@ train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
 
 with open("./etl_1.pkl", "wb") as f:
     pickle.dump(etl_1, f)
-
+    
 
 with open("./etl_2.pkl", "wb") as f:
     pickle.dump(etl_2, f)
+
+
 
 val_trans_1 = valuation_data.apply(etl_1.fillna_normalize, axis=1)
 
@@ -112,7 +61,7 @@ val_trans_2 = val_trans_1.apply(etl_2.reduce_columns_train, axis=1)
 val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
 
 val_trans_2[val_trans_2["date"] < 420
-           ].shape;
+           ].shape
 
 # +
 # %%time
@@ -170,9 +119,5 @@ etl = ETL(
 
 test_df.apply(etl.transform, axis=1)
 # -
-# \begin{equation}
-# \frac{1}{num\_births}\sum_{i}^{num\_births}\frac{1}{number\_of\_visitors_i}\sum_{j}^{number\_of\_visitors_i}age_{ij}
-# \end{equation}
-
 
 
