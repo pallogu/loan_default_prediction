@@ -4,7 +4,7 @@ from sklearn.decomposition import PCA
 import numpy as np
 import pickle
 
-from ETL import ETL_1, ETL_2
+from ETLc import ETL_1, ETL_2
 # -
 
 train = pd.read_csv("../../input/train.csv")
@@ -47,7 +47,7 @@ train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
 
 with open("./etl_1.pkl", "wb") as f:
     pickle.dump(etl_1, f)
-    
+
 
 with open("./etl_2.pkl", "wb") as f:
     pickle.dump(etl_2, f)

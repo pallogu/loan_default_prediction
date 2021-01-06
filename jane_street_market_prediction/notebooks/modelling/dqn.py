@@ -47,7 +47,7 @@ eval_df = eval_df[eval_df["date"] < 420]
 eval_df.shape
 
 # +
-discount = 0.78
+discount = 0.75
 
 train_py_env = MarketEnv(
     trades = train,
@@ -79,7 +79,7 @@ collect_steps_per_iteration = 1
 replay_buffer_max_length = num_iterations*2
 
 batch_size = 128
-learning_rate = 1e-7
+learning_rate = 1e-6
 log_interval = np.floor(num_iterations / 1000)
 
 num_eval_episodes = 10
@@ -89,7 +89,7 @@ eval_interval = np.floor(num_iterations / 50)
 # ### Agent
 
 # +
-fc_layer_params = (128, 128, 64,)
+fc_layer_params = (32, 32,)
 
 q_net = q_network.QNetwork(
     train_env.observation_spec(),
@@ -162,7 +162,7 @@ def calculate_u_metric(env, policy):
     current_time = time.strftime("%H:%M:%S", t)
     print("start_time", current_time)
     
-    while npau00.is_last():
+    while not time_step.is_last():
         action_step = agent.policy.action(time_step)
         actions = np.concatenate((actions, action_step.action.numpy()))
         
@@ -187,20 +187,25 @@ def calculate_u_metric(env, policy):
         
     sum_of_pi = tmp["trade_reward"].sum()
     sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
+    
+    print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
         
     t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
+    print("t: {t}".format(t = t) )
     
-    u  = np.max([np.min([t, 0]), 6]) * sum_of_pi
+    u  = np.min([np.max([t, 0]), 6]) * sum_of_pi
+    print("u: {u}".format(u = u) )
     
     print("finished evaluating policy")
             
-    return u
+    return t, u
 
 
 # ### Training the agent
 
 def run_experiment():
     with mlflow.start_run():
+#         num_iterations = 1000
         mlflow.set_tag("agent_type", "dqn")
         mlflow.log_param("num_act_units", fc_layer_params)
         mlflow.log_param("num_iterations", num_iterations)
@@ -214,6 +219,7 @@ def run_experiment():
         agent.train = common.function(agent.train)
         
         agent.train_step_counter.assign(0)
+        
         
         for _ in range(num_iterations):
             collect_data(train_env, agent.collect_policy, replay_buffer, collect_steps_per_iteration)
@@ -229,16 +235,19 @@ def run_experiment():
                 mlflow.log_metric("loss", train_loss.numpy())
                 
             if _ % eval_interval == 0:
-                mlflow.log_metric("u_metric", calculate_u_metric(val_env, agent.policy))
-
+                t, u = calculate_u_metric(val_env, agent.policy)
+                mlflow.log_metric("u_metric", u)
+                mlflow.log_metric("t_metric", t)
 
 # %%time
 run_experiment()
 
 saver = PolicySaver(agent.policy, batch_size=None)
 
-saver.save("model_dqn_128_128_078.policy")
+saver.save("model_dqn_32_32_075.policy")
 
-val_env.reset()
+
+
+calculate_u_metric(val_env, agent.policy)
 
 
