@@ -1,45 +1,12 @@
-# +
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+import numpy as np
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
+from numpy.random import seed
+from tensorflow.random import set_seed
 
-import functools
-import os
-import time
-
-from absl import app
-from absl import flags
-from absl import logging
-
-import gin
-from six.moves import range
-import tensorflow as tf  # pylint: disable=g-explicit-tensorflow-version-import
-
-from tf_agents.agents.ddpg import critic_rnn_network
-from tf_agents.agents.sac import sac_agent
-from tf_agents.agents.sac import tanh_normal_projection_network
-from tf_agents.drivers import dynamic_episode_driver
-from tf_agents.environments import parallel_py_environment
-from tf_agents.environments import suite_dm_control
-from tf_agents.environments import tf_py_environment
-from tf_agents.environments import wrappers
-from tf_agents.eval import metric_utils
-from tf_agents.metrics import tf_metrics
-from tf_agents.networks import actor_distribution_rnn_network
-from tf_agents.policies import greedy_policy
-from tf_agents.policies import random_tf_policy
-from tf_agents.replay_buffers import tf_uniform_replay_buffer
-from tf_agents.utils import common
-
-flags.DEFINE_string('root_dir', os.getenv('TEST_UNDECLARED_OUTPUTS_DIR'),
-                    'Root directory for writing logs/summaries/checkpoints.')
-flags.DEFINE_multi_string('gin_file', None, 'Path to the trainer config files.')
-flags.DEFINE_multi_string('gin_param', None, 'Gin binding to pass through.')
-
-FLAGS = flags.FLAGS
-# -
-
-import pandas as pd
+seed(42)
+set_seed(42)
 
 # ### Environments
 
@@ -47,6 +14,8 @@ from environment import MarketEnv
 
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
+
+train.head()
 
 # +
 eval_df = eval_df[eval_df["date"] < 420]
@@ -70,98 +39,173 @@ tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
 eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # -
 
-# ## Hyperparameters
+time_step = tf_env.reset()
 
-# +
-num_iterations = 1000000
+time_step.observation
 
-# networks params
-actor_fc_layers = (400, 300)
-actor_output_fc_layers = (100,)
-actor_lstm_size = (40,)
-critic_obs_fc_layers=None
-critic_action_fc_layers=None
-critic_joint_fc_layers=(300,)
-critic_output_fc_layers=(100,)
-critic_lstm_size=(40,)
-num_parallel_environments=1
+tf_env.time_step_spec().reward
 
-# Replay buffer Collection params
-inital_collect_episodes=100
-collect_episodes_per_iteration = 1
-replay_buffer_capacity=1000000
+tf_env.action_spec()
 
-# Params for target update
-target_update_tau=0.05
-target_update_period=5
+actor_nn_arch = (
+    tf_env.time_step_spec().observation.shape[0],
+    32,
+    32,
+    2
+)
+actor_model = keras.Sequential([
+    layers.Input(shape = actor_nn_arch[0]),
+    layers.Dense(
+        actor_nn_arch[1],
+        activation = "relu",
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[0], seed=1)
+    ),
+    layers.Dense(
+        actor_nn_arch[2],
+        activation = "relu",
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[1], seed=2)
+    ),
+    layers.Dense(
+        actor_nn_arch[3],
+        activation = "softmax",
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[2], seed=3)
+    )
+])
 
-# Params for train
-train_steps_per_iteration=1
-batch_size=256
-critic_learning_rate=3e-4
-train_sequence_length=20
-actor_learning_rate=3e-4
-alpha_learning_rate=3e-4
-td_errors_loss_fn=tf.math.squared_difference
-gamma=0.99
-reward_scale_factor=0.1
-gradient_clipping=None
-use_tf_functions=True
-
-# Evaluation params
-num_eval_episodes=30
-eval_interval=10000
-
-# +
-global_step = tf.compat.v1.train.get_or_create_global_step()
-
-time_step_spec = tf_env.time_step_spec()
-observation_spec = time_step_spec.observation
-action_spec = tf_env.action_spec()
-
-actor_net = actor_distribution_rnn_network.ActorDistributionRnnNetwork(
-    observation_spec,
-    action_spec,
-    input_fc_layer_params = actor_fc_layers,
-    lstm_size = actor_lstm_size,
-    output_fc_layer_params = actor_output_fc_layers,
-    continuous_projection_net=tanh_normal_projection_network
-    .TanhNormalProjectionNetwork)
-
-critic_net = critic_rnn_network.CriticRnnNetwork(
-    (observation_spec, action_spec),
-    observation_fc_layer_params = critic_obs_fc_layers,
-    action_fc_layer_params = critic_action_fc_layers,
-    joint_fc_layer_params=critic_joint_fc_layers,
-    lstm_size=critic_lstm_size,
-    output_fc_layer_params=critic_output_fc_layers,
-    kernel_initializer='glorot_uniform',
-    last_kernel_initializer='glorot_uniform'
+critic_nn_arch = (
+    tf_env.time_step_spec().observation.shape[0],
+    32,
+    32,
+    1
 )
 
-tf_agent = sac_agent.SacAgent(
-    time_step_spec,
-    action_spec,
-    actor_network=actor_net,
-    critic_network=critic_net,
-    actor_optimizer=tf.compat.v1.train.AdamOptimizer(
-        learning_rate=actor_learning_rate),
-    critic_optimizer=tf.compat.v1.train.AdamOptimizer(
-        learning_rate=critic_learning_rate),
-    alpha_optimizer=tf.compat.v1.train.AdamOptimizer(
-        learning_rate=alpha_learning_rate),
-    target_update_tau=target_update_tau,
-    target_update_period=target_update_period,
-    td_errors_loss_fn=td_errors_loss_fn,
-    gamma=gamma,
-    reward_scale_factor=reward_scale_factor,
-    gradient_clipping=gradient_clipping,
-    train_step_counter=global_step)
-tf_agent.initialize()
+critic_model = keras.Sequential([
+    layers.Input(shape = critic_nn_arch[0]),
+    layers.Dense(
+        critic_nn_arch[1],
+        activation = "relu",
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[0], seed=11)
+    ),
+    layers.Dense(
+        critic_nn_arch[2],
+        activation = "relu",
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[1], seed=12)
+    ),
+    layers.Dense(
+        critic_nn_arch[3],
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[2], seed=13)
+    )
+])
+
+np.argmax(actor_model(eval_df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy(), axis=1)
+
+
+
+
+
+# ## Hyperparameters
+
+avg_reward_step_size = 0.2
+actor_step_size = 0.5
+critic_step_size = 0.5
+number_of_episodes = 10
+
+
+# ## AC Agent
+
+class ACAgent():
+    def __init__(self, **kwargs):
+        self.actor_model = kwargs.get("actor_model")
+        self.critic_model = kwargs.get("critic_model")
+        self.avg_reward_step_size = kwargs.get("avg_reward_step_size")
+        
+        actor_step_size = kwargs.get("actor_step_size")
+        critic_step_size = kwargs.get("critic_step_size")
+        
+        self.actor_optimizers = [
+            keras.optimizers.Adam(learning_rate=actor_step_size),
+            keras.optimizers.Adam(learning_rate=actor_step_size)
+        ]
+        self.critic_optimizer = keras.optimizers.Adam(learning_rate=critic_step_size)
+        
+        self.reward = None
+        self.delta = None
+        
+        
+    def train(self, time_step):
+        observation = time_step.observation
+        reward = time_step.reward
+        
+        self.update_avg_reward(reward)
+        self.update_td_error(reward, observation)
+        self.update_critic_model(observation)
+        self.update_actor_model(observation)
+        
+        action = np.random.choice(
+            [0, 1],
+            p=self.actor_model(observation).numpy()[0]
+        )
+        
+        self.prev_action = action
+        self.prev_observation = observation
+        
+        return action
+        
+    def update_avg_reward(self, reward):
+        self.reward += self.avg_reward_step_size * reward
+        
+    def update_td_error(self, reward, observation):
+        self.delta = (
+            reward 
+            - self.reward
+            + self.critic_model(observation).numpy()[0][0]
+            - self.critic_model(self.prev_observation).numpy[0][0]
+        )
+        
+    def update_critic_model(self, observation):
+        with tf.GradientTape() as tape:
+            grad = [-1 * self.delta * g for g in  tape.gradient(
+                self.critic_model(observation),
+                self.critic_model.trainable_variables
+            )]
+            
+            self.critic_optimizer.apply_gradients(
+                zip(grad, self.critic_model.trainable_variables)
+            )
+            
+    def update_actor_model(self, observation):
+        prev_action = self.prev_action
+        with tf.GradientTape() as tape:
+            grad = [-1 * self.delta * g for g in tape.gradient(
+                tf.math.log(self.actor_model(observation)),
+                self.actor_model.trainable_variables
+            )]
+            
+            last_layer_w = grad[-2].numpy()
+            last_layer_w[:, prev_action] = 0
+            grad[-2] =  tf.constant(last_layer_w, dtype=np.float32)
+            
+            last_layer_b = grad[-1].numpy()
+            last_layer_b[prev_action] = 0
+            grad[-1] =  tf.constant(last_layer_b, dtype=np.float32)
+            
+            
+            self.actor_optimizers[prev_action].apply_gradients(
+                zip(grad, self.actor_model.trainable_variables)
+            )        
+
+while not time_step.is_last():
+
+
+# +
+def run_experiment():
+    
+        
 # -
 
-    debug_summaries=debug_summaries,
-    summarize_grads_and_vars=summarize_grads_and_vars,
+tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05, seed=None)
+
+
 
 
 # +

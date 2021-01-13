@@ -41,6 +41,7 @@ from tf_agents.utils import common
 
 import pandas as pd
 import numpy as np
+import mlflow
 
 # ### Environments
 
@@ -50,13 +51,15 @@ train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
 # +
+discount = 0.75
+
 eval_df = eval_df[eval_df["date"] < 420]
 train_py_env = MarketEnv(
     trades = train,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=0.9
+    discount=discount
 )
 
 val_py_env = MarketEnv(
@@ -64,7 +67,7 @@ val_py_env = MarketEnv(
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=0.9
+    discount=discount
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
@@ -77,15 +80,15 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 num_iterations = train.shape[0]*2
 
 # networks params
-actor_fc_layers=(200, 100)
-value_fc_layers=(200, 100)
+actor_fc_layers=(32, 32)
+value_fc_layers=(32, 32)
 use_rnns=False
 
 # Replay buffer Collection params
 num_environment_steps=25000000,
 collect_episodes_per_iteration=1
 num_parallel_environments=1
-replay_buffer_capacity=5000
+replay_buffer_capacity=8000
 
 # Params for train
 num_epochs=1
@@ -105,6 +108,8 @@ use_tf_functions=True,
 debug_summaries=False,
 summarize_grads_and_vars=False
 initial_collect_steps = 100
+
+importance_ratio_clipping=0.2
 
 # +
 global_step = tf.compat.v1.train.get_or_create_global_step()
@@ -154,7 +159,7 @@ tf_agent = ppo_clip_agent.PPOClipAgent(
     actor_net=actor_net,
     value_net=value_net,
     entropy_regularization=0.0,
-    importance_ratio_clipping=0.2,
+    importance_ratio_clipping=importance_ratio_clipping,
     normalize_observations=False,
     normalize_rewards=False,
     use_gae=True,
@@ -264,27 +269,36 @@ def calculate_u_metric(env, policy):
     return t, u
 
 
-counter = 0
-while environment_steps_metric.result() < num_environment_steps:
-    print("training step {counter} out of {total_steps} \n".format(counter=counter, total_steps=num_environment_steps))
-    global_step_val = global_step.numpy()
-    start_time = time.time()
-    collect_driver.run()
-    collect_time += time.time() - start_time
-    
-    print("collect time", collect_time)
-    
-    start_time = time.time()
-    total_loss, _ = train_step()
-    replay_buffer.clear()
-    train_time += time.time() - start_time
-    
-    print("train time", train_time)
-    
-    for train_metric in train_metrics:
-        train_metric.tf_summaries(
-            train_step=global_step, step_metrics=step_metrics)
+def run_experiment():
+    with mlflow.start_run():
+        
+        mlflow.set_tag("agent_type", "ppo")
+        mlflow.log_param("actor_fc_layers", actor_fc_layers)
+        mlflow.log_param("value_fc_layers", value_fc_layers)
+        mlflow.log_param("importance_ratio_clipping", importance_ratio_clipping)
+        mlflow.log_param("discount", discount)
+
+
+        while environment_steps_metric.result() < num_environment_steps:
+            print("training step {counter} out of {total_steps} \n".format(counter=environment_steps_metric.result(), total_steps=num_environment_steps))
+            global_step_val = global_step.numpy()
+            collect_driver.run()
+
+            print("collect time", collect_time)
+
+            total_loss, _ = train_step()
+            replay_buffer.clear()
+
+            t, u = calculate_u_metric(eval_tf_env, tf_agent.policy)
+            mlflow.log_metric("u_metric", u)
+            mlflow.log_metric("t_metric", t)
+
+            for train_metric in train_metrics:
+                train_metric.tf_summaries(
+                    train_step=global_step, step_metrics=step_metrics)
 
 calculate_u_metric(eval_tf_env, tf_agent.policy)
+
+run_experiment()
 
 
