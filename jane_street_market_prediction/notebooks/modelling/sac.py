@@ -197,11 +197,11 @@ class ACAgent():
 while not time_step.is_last():
 
 
-# +
 def run_experiment():
-    
-        
-# -
+    while not time_step.is_last():
+        time_step = environment.step(action)
+        action = agent.train(time_step)
+
 
 tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05, seed=None)
 
