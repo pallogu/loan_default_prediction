@@ -4,6 +4,9 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from numpy.random import seed
 from tensorflow.random import set_seed
+import pandas as pd
+from tf_agents.environments import tf_py_environment
+import time
 
 seed(42)
 set_seed(42)
@@ -15,10 +18,8 @@ from environment import MarketEnv
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
-train.head()
-
 # +
-eval_df = eval_df[eval_df["date"] < 420]
+# eval_df = eval_df[eval_df["date"] < 420]
 train_py_env = MarketEnv(
     trades = train,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
@@ -38,14 +39,6 @@ val_py_env = MarketEnv(
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
 eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # -
-
-time_step = tf_env.reset()
-
-time_step.observation
-
-tf_env.time_step_spec().reward
-
-tf_env.action_spec()
 
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
@@ -97,22 +90,44 @@ critic_model = keras.Sequential([
     )
 ])
 
-np.argmax(actor_model(eval_df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy(), axis=1)
-
-
-
-
-
 # ## Hyperparameters
 
-avg_reward_step_size = 0.2
-actor_step_size = 0.5
-critic_step_size = 0.5
+avg_reward_step_size = 0.1
+actor_step_size = 0.1
+critic_step_size = 0.1
 number_of_episodes = 10
+
+
+def calculate_u_metric(df, model):
+    print("evaluating policy")
+  
+    actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy(), axis=1)
+            
+    eval_df["action"] = pd.Series(data=actions, index = eval_df.index)
+    eval_df["trade_reward"] = eval_df["action"]*eval_df["weight"]*eval_df["resp"]
+    eval_df["trade_reward_squared"] = eval_df["trade_reward"]*eval_df["trade_reward"]
+
+    tmp = eval_df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+        
+    sum_of_pi = tmp["trade_reward"].sum()
+    sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
+    
+    print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
+        
+    t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
+    print("t: {t}".format(t = t) )
+    
+    u  = np.min([np.max([t, 0]), 6]) * sum_of_pi
+    print("u: {u}".format(u = u) )
+    
+    print("finished evaluating policy")
+            
+    return t, u
 
 
 # ## AC Agent
 
+# +
 class ACAgent():
     def __init__(self, **kwargs):
         self.actor_model = kwargs.get("actor_model")
@@ -128,8 +143,19 @@ class ACAgent():
         ]
         self.critic_optimizer = keras.optimizers.Adam(learning_rate=critic_step_size)
         
-        self.reward = None
-        self.delta = None
+        self.reward = 0
+        self.delta = 0
+        
+    def init(self, time_step):
+        observation = time_step.observation
+        reward = time_step.reward
+        
+        action = np.random.choice([0, 1])
+        
+        self.prev_observation = observation
+        self.prev_action = action
+        
+        return action
         
         
     def train(self, time_step):
@@ -141,6 +167,9 @@ class ACAgent():
         self.update_critic_model(observation)
         self.update_actor_model(observation)
         
+        print(observation)
+        print(self.actor_model(observation))
+        
         action = np.random.choice(
             [0, 1],
             p=self.actor_model(observation).numpy()[0]
@@ -148,6 +177,7 @@ class ACAgent():
         
         self.prev_action = action
         self.prev_observation = observation
+        
         
         return action
         
@@ -159,7 +189,7 @@ class ACAgent():
             reward 
             - self.reward
             + self.critic_model(observation).numpy()[0][0]
-            - self.critic_model(self.prev_observation).numpy[0][0]
+            - self.critic_model(self.prev_observation).numpy()[0][0]
         )
         
     def update_critic_model(self, observation):
@@ -192,53 +222,35 @@ class ACAgent():
             
             self.actor_optimizers[prev_action].apply_gradients(
                 zip(grad, self.actor_model.trainable_variables)
-            )        
-
-while not time_step.is_last():
-
-
-def run_experiment():
-    while not time_step.is_last():
-        time_step = environment.step(action)
-        action = agent.train(time_step)
-
-
-tf.keras.initializers.RandomNormal(mean=0.0, stddev=0.05, seed=None)
-
-
+            )   
+            
+agent = ACAgent(
+    actor_model = actor_model,
+    critic_model = critic_model,
+    avg_reward_step_size = avg_reward_step_size,
+    actor_step_size = actor_step_size,
+    critic_step_size = critic_step_size
+)
 
 
 # +
-def train_eval(
+def run_experiment():
+    t = time.localtime()
+    for epoch in range(number_of_episodes):
+        time_step = tf_env.reset()
+        action = agent.init(time_step)
+        counter = 0
+        while not time_step.is_last():
+            time_step = tf_env.step(action)
+            action = agent.train(time_step)
+            counter += 1
+            
+            if counter % 10000:
+                current_time = time.strftime("%H:%M:%S", t)
+                print("cycle_time", current_time)
+                print(calculate_u_metric(eval_df, actor_model))
+                
+run_experiment()
+# -
 
-    # Evaluation params
 
-    
-):
-    
-    eval_metrics = [
-        tf_metrics.AverageReturnMetric(buffer_size=num_eval_episodes)
-        tf_metrics.AverageEpisodeLengthMetric=num_eval_episodes
-    ]
-    
-    
-    
-    replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
-        data_spec=tf_agent.collect_data_spec,
-        batch_size=tf_env.batch_size,
-        max_length=replay_buffer_capacity)
-    replay_observer = [replay_buffer.add_batch]
-    
-    tf_agent.train = common.function(tf_agent.train)
-    
-    def train_step():
-        experience, _ = next(iterator)
-        return tf_agent.train(experience)
-
-    if use_tf_functions:
-        train_step = common.function(train_step)
-        
-    for _ in range(num_iterations):
-        for _ in range(episode_steps):
-            for _ in range(train_steps_per_iteration):
-                train_step()
