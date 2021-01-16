@@ -42,8 +42,8 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    32,
-    32,
+    4,
+    4,
     2
 )
 actor_model = keras.Sequential([
@@ -67,8 +67,8 @@ actor_model = keras.Sequential([
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    32,
-    32,
+    4,
+    4,
     1
 )
 
@@ -92,14 +92,14 @@ critic_model = keras.Sequential([
 
 # ## Hyperparameters
 
-avg_reward_step_size = 0.1
-actor_step_size = 0.1
-critic_step_size = 0.1
+avg_reward_step_size = 9e-1
+actor_step_size = 1e-2
+critic_step_size = 1e-2
 number_of_episodes = 10
 
 
 def calculate_u_metric(df, model):
-    print("evaluating policy")
+    # print("evaluating policy")
   
     actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy(), axis=1)
             
@@ -112,15 +112,13 @@ def calculate_u_metric(df, model):
     sum_of_pi = tmp["trade_reward"].sum()
     sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
     
-    print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
+    # print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
         
     t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
-    print("t: {t}".format(t = t) )
+    # print("t: {t}".format(t = t) )
     
-    u  = np.min([np.max([t, 0]), 6]) * sum_of_pi
-    print("u: {u}".format(u = u) )
-    
-    print("finished evaluating policy")
+    u = np.min([np.max([t, 0]), 6]) * sum_of_pi
+    # print("u: {u}".format(u = u) )
             
     return t, u
 
@@ -137,27 +135,23 @@ class ACAgent():
         actor_step_size = kwargs.get("actor_step_size")
         critic_step_size = kwargs.get("critic_step_size")
         
-        self.actor_optimizers = [
-            keras.optimizers.Adam(learning_rate=actor_step_size),
-            keras.optimizers.Adam(learning_rate=actor_step_size)
-        ]
+        self.actor_optimizer = keras.optimizers.Adam(learning_rate=actor_step_size)
         self.critic_optimizer = keras.optimizers.Adam(learning_rate=critic_step_size)
         
         self.reward = 0
         self.delta = 0
+        self.prev_observation = None
+        self.prev_action = None
         
     def init(self, time_step):
         observation = time_step.observation
-        reward = time_step.reward
-        
+
         action = np.random.choice([0, 1])
-        
         self.prev_observation = observation
         self.prev_action = action
         
         return action
-        
-        
+
     def train(self, time_step):
         observation = time_step.observation
         reward = time_step.reward
@@ -167,18 +161,17 @@ class ACAgent():
         self.update_critic_model(observation)
         self.update_actor_model(observation)
         
-        print(observation)
-        print(self.actor_model(observation))
-        
+        probs = self.actor_model(observation).numpy()[0]
+
         action = np.random.choice(
             [0, 1],
-            p=self.actor_model(observation).numpy()[0]
+            p=probs
         )
+#         print(probs)
         
         self.prev_action = action
         self.prev_observation = observation
-        
-        
+
         return action
         
     def update_avg_reward(self, reward):
@@ -200,7 +193,8 @@ class ACAgent():
             )]
             
             self.critic_optimizer.apply_gradients(
-                zip(grad, self.critic_model.trainable_variables)
+                zip(grad, self.critic_model.trainable_variables),
+                experimental_aggregate_gradients=False
             )
             
     def update_actor_model(self, observation):
@@ -213,23 +207,24 @@ class ACAgent():
             
             last_layer_w = grad[-2].numpy()
             last_layer_w[:, prev_action] = 0
-            grad[-2] =  tf.constant(last_layer_w, dtype=np.float32)
+            grad[-2] = tf.constant(last_layer_w, dtype=np.float32)
             
             last_layer_b = grad[-1].numpy()
             last_layer_b[prev_action] = 0
-            grad[-1] =  tf.constant(last_layer_b, dtype=np.float32)
-            
-            
-            self.actor_optimizers[prev_action].apply_gradients(
-                zip(grad, self.actor_model.trainable_variables)
+            grad[-1] = tf.constant(last_layer_b, dtype=np.float32)
+
+            self.actor_optimizer.apply_gradients(
+                zip(grad, self.actor_model.trainable_variables),
+                experimental_aggregate_gradients=False
             )   
-            
+
+
 agent = ACAgent(
-    actor_model = actor_model,
-    critic_model = critic_model,
-    avg_reward_step_size = avg_reward_step_size,
-    actor_step_size = actor_step_size,
-    critic_step_size = critic_step_size
+    actor_model=actor_model,
+    critic_model=critic_model,
+    avg_reward_step_size=avg_reward_step_size,
+    actor_step_size=actor_step_size,
+    critic_step_size=critic_step_size
 )
 
 
@@ -247,10 +242,11 @@ def run_experiment():
             
             if counter % 10000:
                 current_time = time.strftime("%H:%M:%S", t)
-                print("cycle_time", current_time)
+                # print("current_timeycle_time", current_time)
+                # print(counter)
                 print(calculate_u_metric(eval_df, actor_model))
-                
+
+
 run_experiment()
 # -
-
 
