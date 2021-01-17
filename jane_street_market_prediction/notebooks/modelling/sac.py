@@ -44,8 +44,9 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    32,
-    32,
+    256,
+    128,
+    16,
     2
 )
 actor_model = keras.Sequential([
@@ -55,22 +56,30 @@ actor_model = keras.Sequential([
         activation = "relu",
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[0], seed=1)
     ),
+    layers.Dropout(0.5),
     layers.Dense(
         actor_nn_arch[2],
         activation = "relu",
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[1], seed=2)
     ),
+    layers.Dropout(0.5),
     layers.Dense(
         actor_nn_arch[3],
-        activation = "softmax",
+        activation = "relu",
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[2], seed=3)
+    ),
+    layers.Dense(
+        actor_nn_arch[4],
+        activation = "softmax",
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/actor_nn_arch[3], seed=4)
     )
 ])
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    32,
-    32,
+    256,
+    128,
+    64,
     1
 )
 
@@ -81,14 +90,21 @@ critic_model = keras.Sequential([
         activation = "relu",
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[0], seed=11)
     ),
+    layers.Dropout(0.5),
     layers.Dense(
         critic_nn_arch[2],
         activation = "relu",
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[1], seed=12)
     ),
+    layers.Dropout(0.5),
     layers.Dense(
         critic_nn_arch[3],
+        activation = "relu",
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[2], seed=13)
+    ),
+    layers.Dense(
+        critic_nn_arch[4],
+        kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[3], seed=14)
     )
 ])
 # -
@@ -170,7 +186,6 @@ class ACAgent():
             [0, 1],
             p=probs
         )
-#         print(probs)
         
         self.prev_action = action
         self.prev_observation = observation
@@ -299,7 +314,7 @@ agent = ACAgent(
 def run_experiment():
     with mlflow.start_run():
         
-        mlflow.set_tag("agent_type", "ppo")
+        mlflow.set_tag("agent_type", "sac")
         mlflow.log_param("actor_nn_layers", actor_nn_arch )
         mlflow.log_param("critic_nn_layers", critic_nn_arch)
         mlflow.log_param("avg_reward_step_size", avg_reward_step_size)
@@ -318,7 +333,7 @@ def run_experiment():
 
                 if counter % 10000 == 0:
                     current_time = time.strftime("%H:%M:%S", t)
-                    print(epoch, counter)
+                    print(epoch, counter, current_time)
                     t_eval, u_eval = calculate_u_metric(eval_df, actor_model)
                     t_train, u_train = calculate_u_metric(train, actor_model)
                     mlflow.log_metrics({
@@ -331,4 +346,10 @@ def run_experiment():
 
 run_experiment()
 # -
+actor_model.trainable_variables()
+
+actor_model(train[:2][["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy()
+
+actor_model.summary()
+
 
