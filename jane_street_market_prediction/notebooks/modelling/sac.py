@@ -98,7 +98,7 @@ critic_model = keras.Sequential([
 avg_reward_step_size = 1e-3
 actor_step_size = 1e-6
 critic_step_size = 1e-5
-number_of_episodes = 10
+number_of_episodes = 2
 
 
 def calculate_u_metric(df, model):
@@ -106,11 +106,11 @@ def calculate_u_metric(df, model):
   
     actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy(), axis=1)
             
-    eval_df["action"] = pd.Series(data=actions, index = eval_df.index)
-    eval_df["trade_reward"] = eval_df["action"]*eval_df["weight"]*eval_df["resp"]
-    eval_df["trade_reward_squared"] = eval_df["trade_reward"]*eval_df["trade_reward"]
+    df["action"] = pd.Series(data=actions, index = df.index)
+    df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
+    df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
 
-    tmp = eval_df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+    tmp = df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
         
     sum_of_pi = tmp["trade_reward"].sum()
     sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
@@ -316,10 +316,9 @@ def run_experiment():
                 action = agent.train(time_step)
                 counter += 1
 
-                if counter % 1000 == 0:
+                if counter % 10000 == 0:
                     current_time = time.strftime("%H:%M:%S", t)
-                    print("current_timeycle_time", current_time)
-                    print(counter)
+                    print(epoch, counter)
                     t_eval, u_eval = calculate_u_metric(eval_df, actor_model)
                     t_train, u_train = calculate_u_metric(train, actor_model)
                     mlflow.log_metrics({
