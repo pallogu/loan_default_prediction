@@ -6,7 +6,9 @@ from numpy.random import seed
 from tensorflow.random import set_seed
 import pandas as pd
 from tf_agents.environments import tf_py_environment
+from tf_agents.trajectories.time_step import TimeStep
 import time
+import mlflow
 
 seed(42)
 set_seed(42)
@@ -38,12 +40,12 @@ val_py_env = MarketEnv(
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
 eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
-# -
 
+# +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    4,
-    4,
+    32,
+    32,
     2
 )
 actor_model = keras.Sequential([
@@ -67,8 +69,8 @@ actor_model = keras.Sequential([
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    4,
-    4,
+    32,
+    32,
     1
 )
 
@@ -89,12 +91,13 @@ critic_model = keras.Sequential([
         kernel_initializer = tf.keras.initializers.RandomNormal(mean=0.0, stddev=1/critic_nn_arch[2], seed=13)
     )
 ])
+# -
 
 # ## Hyperparameters
 
-avg_reward_step_size = 9e-1
-actor_step_size = 1e-2
-critic_step_size = 1e-2
+avg_reward_step_size = 1e-3
+actor_step_size = 1e-6
+critic_step_size = 1e-5
 number_of_episodes = 10
 
 
@@ -149,7 +152,7 @@ class ACAgent():
         action = np.random.choice([0, 1])
         self.prev_observation = observation
         self.prev_action = action
-        
+                
         return action
 
     def train(self, time_step):
@@ -174,12 +177,12 @@ class ACAgent():
 
         return action
         
-    def update_avg_reward(self, reward):
-        self.reward += self.avg_reward_step_size * reward
+    def update_avg_reward(self, observation_reward):
+        self.reward = (1-self.avg_reward_step_size)*self.reward + self.avg_reward_step_size * observation_reward
         
-    def update_td_error(self, reward, observation):
+    def update_td_error(self, observation_reward, observation):        
         self.delta = (
-            reward 
+            observation_reward 
             - self.reward
             + self.critic_model(observation).numpy()[0][0]
             - self.critic_model(self.prev_observation).numpy()[0][0]
@@ -219,6 +222,72 @@ class ACAgent():
             )   
 
 
+
+# +
+## Test Cell
+
+np.random.seed(42)
+
+
+actor_model_test = keras.Sequential([
+    layers.Input(shape = 4),
+    layers.Dense(
+        4,
+        activation = "relu",
+        kernel_initializer = tf.keras.initializers.Constant(value=1)
+    ),
+    layers.Dense(
+        2,
+        activation = "softmax",
+        kernel_initializer = tf.keras.initializers.Constant(value=1)
+    )
+])
+
+
+critic_model_test = keras.Sequential([
+    layers.Input(shape = 4),
+    layers.Dense(
+        4,
+        activation = "relu",
+        kernel_initializer = tf.keras.initializers.Constant(value=1)
+    ),
+    layers.Dense(
+        1,
+        kernel_initializer = tf.keras.initializers.Constant(value=1)
+    )
+])
+
+agent_test = ACAgent(
+    actor_model=actor_model_test,
+    critic_model=critic_model_test,
+    avg_reward_step_size=0.1,
+    actor_step_size=0.1,
+    critic_step_size=0.1
+)
+
+agent_test.init(TimeStep(
+        step_type = tf.constant([0], dtype=np.int32),
+        reward = tf.constant([0], dtype=np.float32),
+        discount = tf.constant([1], dtype=np.float32),
+        observation = tf.constant(np.array([[1, 1, 1, 1]]), dtype=np.float64),  
+    )
+)
+
+agent_test.update_avg_reward(1)
+assert agent_test.reward == 0.1
+agent_test.update_avg_reward(1)
+assert agent_test.reward == 0.19
+agent_test.update_avg_reward(1)
+assert agent_test.reward == 0.271
+
+agent_test.update_td_error(1, tf.constant(np.array([[1, 1, 0, 0]]), dtype=np.float64))
+assert agent_test.delta == -7.271000000000001
+
+
+
+# +
+# %%time
+
 agent = ACAgent(
     actor_model=actor_model,
     critic_model=critic_model,
@@ -227,24 +296,38 @@ agent = ACAgent(
     critic_step_size=critic_step_size
 )
 
-
-# +
 def run_experiment():
-    t = time.localtime()
-    for epoch in range(number_of_episodes):
-        time_step = tf_env.reset()
-        action = agent.init(time_step)
-        counter = 0
-        while not time_step.is_last():
-            time_step = tf_env.step(action)
-            action = agent.train(time_step)
-            counter += 1
-            
-            if counter % 10000:
-                current_time = time.strftime("%H:%M:%S", t)
-                # print("current_timeycle_time", current_time)
-                # print(counter)
-                print(calculate_u_metric(eval_df, actor_model))
+    with mlflow.start_run():
+        
+        mlflow.set_tag("agent_type", "ppo")
+        mlflow.log_param("actor_nn_layers", actor_nn_arch )
+        mlflow.log_param("critic_nn_layers", critic_nn_arch)
+        mlflow.log_param("avg_reward_step_size", avg_reward_step_size)
+        mlflow.log_param("actor_step_size", actor_step_size)
+        mlflow.log_param("critic_step_size", critic_step_size)
+    
+        t = time.localtime()
+        for epoch in range(number_of_episodes):
+            time_step = tf_env.reset()
+            action = agent.init(time_step)
+            counter = 0
+            while not time_step.is_last():
+                time_step = tf_env.step(action)
+                action = agent.train(time_step)
+                counter += 1
+
+                if counter % 1000 == 0:
+                    current_time = time.strftime("%H:%M:%S", t)
+                    print("current_timeycle_time", current_time)
+                    print(counter)
+                    t_eval, u_eval = calculate_u_metric(eval_df, actor_model)
+                    t_train, u_train = calculate_u_metric(train, actor_model)
+                    mlflow.log_metrics({
+                        "t_eval": t_eval,
+                        "u_eval": u_eval,
+                        "t_train": t_train,
+                        "u_train": u_train
+                    })
 
 
 run_experiment()
