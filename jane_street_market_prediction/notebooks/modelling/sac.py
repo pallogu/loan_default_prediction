@@ -90,27 +90,28 @@ def create_actor_model():
             actor_nn_arch[1],
             activation="relu",
             kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1, seed=1)
+                mean=0.0, stddev=1/actor_nn_arch[0], seed=1)
         ),
         layers.Dropout(0.5),
         layers.Dense(
             actor_nn_arch[2],
             activation="relu",
             kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1, seed=2)
+                mean=0.0, stddev=1/actor_nn_arch[1], seed=2)
         ),
         layers.Dropout(0.5),
         layers.Dense(
             actor_nn_arch[3],
             activation="relu",
             kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1, seed=3
+                mean=0.0, stddev=1/actor_nn_arch[2], seed=3
             )
         ),
+        layers.Dropout(0.5),
         layers.Dense(
             actor_nn_arch[4],
             kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1, seed=4)
+                mean=0.0, stddev=1/actor_nn_arch[3], seed=4)
         )
     ])
 
@@ -140,6 +141,7 @@ def create_critic_model():
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/critic_nn_arch[2], seed=13)
         ),
+        layers.Dropout(0.5),
         layers.Dense(
             critic_nn_arch[4],
             kernel_initializer=tf.keras.initializers.RandomNormal(
@@ -205,7 +207,7 @@ class ACAgent():
         self.prev_action = None
 
         self.counter = 0
-        self.tau = self.update_tau()
+        self.tau = 1
 
     def init(self, time_step):
         observation = time_step.observation
@@ -242,6 +244,9 @@ class ACAgent():
                 np.array(-self.counter*self.t_beta, dtype=np.float64)
             )
         )
+        
+        if self.verbose:
+            print("update tau", self.tau)
 
         self.counter += 1
 
@@ -249,9 +254,10 @@ class ACAgent():
         #         return self.actor_model(observation)
         if self.verbose:
             print("logging from policy\n\n")
-            print(self.actor_model(observation))
-            print(self.tau)
-            print(tf.nn.softmax(self.actor_model(observation)/self.tau))
+            print("observation", self.actor_model(observation))
+            print("tau", self.tau)
+            print("actor model % tau", self.actor_model(observation)/self.tau)
+            print("policy", tf.nn.softmax(self.actor_model(observation)/self.tau))
         return tf.nn.softmax(self.actor_model(observation)/self.tau)
 
     def train(self, time_step):
@@ -269,7 +275,8 @@ class ACAgent():
         self.update_actor_model(observation)
 
         probs = self.policy(observation).numpy()[0]
-        print(probs)
+        if self.verbose:
+            print(probs)
 
         action = np.random.choice(
             [0, 1],
@@ -328,7 +335,7 @@ class ACAgent():
         with tf.GradientTape() as tape:
 
             grad = [-1 * self.delta * g for g in tape.gradient(
-                tf.math.log(self.actor_model(observation)),
+                tf.math.log(tf.nn.softmax(self.actor_model(observation)/self.tau)),
                 self.actor_model.trainable_variables
             )]
 
@@ -361,36 +368,36 @@ class ACAgent():
 
 
 # +
-## Test Cell
+# Test Cell
 
 np.random.seed(42)
 
 
 actor_model_test = keras.Sequential([
-    layers.Input(shape = 4),
+    layers.Input(shape=4),
     layers.Dense(
         4,
-        activation = "relu",
-        kernel_initializer = tf.keras.initializers.Constant(value=1)
+        activation="relu",
+        kernel_initializer=tf.keras.initializers.Constant(value=1)
     ),
     layers.Dense(
         2,
-        activation = "softmax",
-        kernel_initializer = tf.keras.initializers.Constant(value=1)
+        activation="softmax",
+        kernel_initializer=tf.keras.initializers.Constant(value=1)
     )
 ])
 
 
 critic_model_test = keras.Sequential([
-    layers.Input(shape = 4),
+    layers.Input(shape=4),
     layers.Dense(
         4,
-        activation = "relu",
-        kernel_initializer = tf.keras.initializers.Constant(value=1)
+        activation="relu",
+        kernel_initializer=tf.keras.initializers.Constant(value=1)
     ),
     layers.Dense(
         1,
-        kernel_initializer = tf.keras.initializers.Constant(value=1)
+        kernel_initializer=tf.keras.initializers.Constant(value=1)
     )
 ])
 
@@ -399,15 +406,15 @@ agent_test = ACAgent(
     critic_model=critic_model_test,
     avg_reward_step_size=0.1,
     actor_step_size=0.1,
-    critic_step_size=0.1
+    critic_step_size=0.1,
+    verbose=True
 )
 
-test_action=agent_test.init(TimeStep(
-        step_type = tf.constant([0], dtype=np.int32),
-        reward = tf.constant([0], dtype=np.float32),
-        discount = tf.constant([1], dtype=np.float32),
-        observation = tf.constant(np.array([[1, 1, 1, 1]]), dtype=np.float64),  
-    )
+test_action = agent_test.init(TimeStep(
+    step_type=tf.constant([0], dtype=np.int32),
+    reward=tf.constant([0], dtype=np.float32),
+    discount=tf.constant([1], dtype=np.float32),
+    observation=tf.constant(np.array([[1, 1, 1, 1]]), dtype=np.float64))
 )
 
 assert test_action == 0
@@ -419,9 +426,16 @@ assert agent_test.reward == 0.19
 agent_test.update_avg_reward(1)
 assert agent_test.reward == 0.271
 
-agent_test.update_td_error(1, tf.constant(np.array([[1, 1, 0, 0]]), dtype=np.float64))
+agent_test.update_td_error(1, tf.constant(
+    np.array([[1, 1, 0, 0]]), dtype=np.float64))
 assert agent_test.delta == -7.271000000000001
 
+test_action = agent_test.train(TimeStep(
+    step_type=tf.constant([0], dtype=np.int32),
+    reward=tf.constant([0], dtype=np.float32),
+    discount=tf.constant([1], dtype=np.float32),
+    observation=tf.constant(np.array([[1, 2, 1, 2]]), dtype=np.float64))
+)
 # -
 
 
