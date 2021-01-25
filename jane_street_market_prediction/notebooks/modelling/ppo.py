@@ -45,7 +45,7 @@ import mlflow
 
 # ### Environments
 
-from environment import MarketEnv
+from environment import MarketEnvWithRiskAppetite
 
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
@@ -54,7 +54,7 @@ eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 discount = 0.75
 
 eval_df = eval_df[eval_df["date"] < 420]
-train_py_env = MarketEnv(
+train_py_env = MarketEnvWithRiskAppetite(
     trades = train,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
@@ -62,7 +62,7 @@ train_py_env = MarketEnv(
     discount=discount
 )
 
-val_py_env = MarketEnv(
+val_py_env = MarketEnvWithRiskAppetite(
     trades = eval_df,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
@@ -77,7 +77,7 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ## Hyperparameters
 
 # +
-num_iterations = train.shape[0]*2
+num_iterations = 100000
 
 # networks params
 actor_fc_layers=(32, 32)
@@ -91,11 +91,11 @@ num_parallel_environments=1
 replay_buffer_capacity=8000
 
 # Params for train
-num_epochs=1
+num_epochs=100000
 learning_rate=1e-6
 
 # Params for eval
-num_eval_episodes=30
+num_eval_episodes=100
 eval_interval=500
 
 # Params for summaries and logging

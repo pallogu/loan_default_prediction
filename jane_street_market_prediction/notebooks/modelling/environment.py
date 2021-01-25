@@ -1,6 +1,8 @@
 # +
+from numpy.core.numeric import outer
 import tensorflow as tf
 import numpy as np
+from tensorflow.python.util.tf_export import kwarg_only
 
 from tf_agents.environments import py_environment
 from tf_agents.environments import tf_environment
@@ -124,5 +126,103 @@ utils.validate_py_environment(env, episodes=5)
 env.reset()
 
 env.step(1)
+
+
+class MarketEnvWithRiskAppetite(py_environment.PyEnvironment):
+    def __init__(self, **kwargs):
+
+        self.trades = kwargs.get("trades")
+        self.features = kwargs.get("features")
+        self.reward_column = kwargs.get("reward_column")
+        self.weight_column = kwargs.get("weight_column")
+        self.discount = kwargs.get("discount", 1)
+        self.risk_apetite = kwargs.get("risk_apetite", -100)
+        self.out_of_funds_penalty = kwargs.get("out_of_funds_penalty", 500)
+
+        self.counter = 0
+        self.pnl = 0
+
+        self._action_spec = array_spec.BoundedArraySpec(
+            shape=(),
+            dtype=np.int32,
+            minimum=0,
+            maximum=1,
+            name="action"
+        )
+
+        self._observation_spec = array_spec.ArraySpec(
+            shape=(len(self.features), ),
+            dtype=np.float64,
+            name='observation'
+        )
+
+        self._state = self.trades.iloc[self.counter][self.features].values
+
+        self._episode_ended = False
+
+    def action_spec(self):
+        return self._action_spec
+
+    def observation_spec(self):
+        return self._observation_spec
+
+    def _reset(self):
+        self.counter = 0
+        self.pnl = 0
+        self.trades = self.trades.sample(frac=1.0)
+        self._state = self.trades.iloc[self.counter][self.features].values
+        self._episode_ended = False
+        return ts.restart(self._state)
+
+    def _step(self, action):
+        out_of_funds = self.pnl < self.risk_apetite
+
+        if self._episode_ended:
+            return self.reset()
+
+        if self.counter == (len(self.trades) - 2):
+            self._episode_ended = True
+
+        if out_of_funds:
+            self._episode_ended = True
+
+        self._state = self.trades.iloc[self.counter + 1][self.features].values
+        reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column] * \
+            self.trades.iloc[self.counter][self.weight_column]
+        self.pnl += reward
+
+        if out_of_funds:
+            reward -= self.out_of_funds_penalty
+
+        if self._episode_ended:
+            time_step = ts.termination(
+                np.array(self._state, dtype=np.float64), reward)
+        else:
+            time_step = ts.transition(
+                np.array(self._state, dtype=np.float64), reward, discount=self.discount)
+
+        self.counter += 1
+
+        return time_step
+
+
+env_with_risk_appetite = MarketEnvWithRiskAppetite(
+    trades=trades,
+    features=features,
+    reward_column = reward_column,
+    weight_column = "weight",
+    risk_apetite = 0,
+    out_of_funds_penalty = 100
+)
+
+utils.validate_py_environment(env_with_risk_appetite, episodes=5)
+
+env_with_risk_appetite.reset()
+
+time_step = env_with_risk_appetite.step(1)
+print(time_step.is_last())
+print(time_step)
+
+
 
 
