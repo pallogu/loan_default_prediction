@@ -13,6 +13,10 @@ import logging
 import subprocess
 
 
+gpus = tf.config.experimental.list_physical_devices('GPU')
+tf.config.experimental.set_memory_growth(gpus[0], True)
+
+
 # +
 seed(42)
 set_seed(42)
@@ -72,7 +76,7 @@ reward_multiplicator = 100
 # +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    512,
+    1024,
     128,
     64,
     2
@@ -83,7 +87,7 @@ critic_dropout = 0.3
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    512,
+    1024,
     128,
     64,
     1
@@ -167,7 +171,7 @@ def create_critic_model():
 train_tensor = tf.constant(train[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values, dtype=np.float32)
 eval_df_tensor = tf.constant(eval_df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values, dtype=np.float32)
 
-def calculate_u_metric(tensor, model, boundary=0.0):
+def calculate_u_metric(df, tensor, model, boundary=0.0):
     print("evaluating policy")
   
     actions = np.argmax(model(tensor).numpy(), axis=1)
@@ -305,7 +309,8 @@ class ACAgent():
 
     def train(self, time_step):
         observation = time_step.observation
-        reward = time_step.reward
+
+        reward = tf.dtypes.cast(tf.reshape(time_step.reward, shape=()), tf.float64)
         
         if self.debug:
             tf.debugging.assert_all_finite(
@@ -333,7 +338,7 @@ class ACAgent():
 
         return action
 
-    def update_avg_reward(self, observation_reward):        
+    def update_avg_reward(self, observation_reward):
         self.reward.assign(
             self.avg_reward_step_size_remainer*self.reward + 
             self.avg_reward_step_size * observation_reward*self.reward_multiplicator
@@ -531,16 +536,16 @@ def run_experiment():
                     t = time.localtime()
                     current_time = time.strftime("%H:%M:%S", t)
                     print(epoch, counter, current_time)
-                    t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
-                    t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
-                    mlflow.log_metrics({
-                        "t_eval": t_eval,
-                        "u_eval": u_eval,
-                        "t_train": t_train,
-                        "u_train": u_train,
-                        "ratio_of_ones_eval": ratio_of_ones_eval,
-                        "ratio_of_ones_train": ratio_of_ones_train
-                    })
+                    # t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
+                    # t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
+                    # mlflow.log_metrics({
+                    #     "t_eval": t_eval,
+                    #     "u_eval": u_eval,
+                    #     "t_train": t_train,
+                    #     "u_train": u_train,
+                    #     "ratio_of_ones_eval": ratio_of_ones_eval,
+                    #     "ratio_of_ones_train": ratio_of_ones_train
+                    # })
         agent.actor_model.save("./actor_model")         
         subprocess.run(["zip", "-r", "model.zip", "actor_model"])
         mlflow.log_artifact("model.zip")
