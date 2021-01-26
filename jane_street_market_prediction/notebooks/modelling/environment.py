@@ -54,6 +54,8 @@ class MarketEnv(py_environment.PyEnvironment):
         self.reward_column = kwargs.get("reward_column")
         self.weight_column = kwargs.get("weight_column")
         self.discount = kwargs.get("discount", 1)
+        self.reward_multiplicator = kwargs.get("reward_multiplicator", 1)
+        self.negative_reward_multiplicator = kwargs.get("negative_reward_multiplicator", 1)
         
         self.counter = 0
         
@@ -102,6 +104,11 @@ class MarketEnv(py_environment.PyEnvironment):
         self._state = self.trades.iloc[self.counter + 1][self.features].values
         reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column]*self.trades.iloc[self.counter][self.weight_column]
         
+        if reward > 0:
+            reward = reward*self.reward_multiplicator
+            
+        if reward < 0:
+            reward = reward*self.negative_reward_multiplicator
         
         if self._episode_ended:
             time_step = ts.termination(np.array(self._state, dtype = np.float64), reward)
@@ -118,7 +125,9 @@ env = MarketEnv(
     trades=trades,
     features=features,
     reward_column = reward_column,
-    weight_column = "weight"
+    weight_column = "weight",
+    reward_multiplicator = 100, 
+    negative_reward_multiplicator = 10000
 )
 
 utils.validate_py_environment(env, episodes=5)

@@ -11,10 +11,12 @@ import time
 import mlflow
 import logging
 import subprocess
+import tensorflow_probability as tfp
 
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
-tf.config.experimental.set_memory_growth(gpus[0], True)
+if len(gpus):
+    tf.config.experimental.set_memory_growth(gpus[0], True)
 
 
 # +
@@ -33,12 +35,17 @@ eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
+reward_multiplicator = 100
+negative_reward_multiplicator = 1000
+
 train_py_env = MarketEnv(
     trades = train,
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=0.9
+    discount=0.9,
+    reward_multiplicator = reward_multiplicator,
+    negative_reward_multiplicator = negative_reward_multiplicator
 )
 
 val_py_env = MarketEnv(
@@ -46,7 +53,9 @@ val_py_env = MarketEnv(
     features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=0.9
+    discount=0.9,
+    reward_multiplicator = 1,
+    negative_reward_multiplicator = 1
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
@@ -63,15 +72,23 @@ actor_step_size = 1e-6
 critic_step_size = 1e-5
 number_of_episodes = 1
 
-t_beta = 0.00001
-t_alpha = 100
-t_epsilon = 0.001
-
 tau = 10
-reward_multiplicator = 100
+
 # -
 
 # ### Defining Architecture of actor and critic
+
+tf_env.time_step_spec().observation
+
+tf_env.reset()
+
+tf.TensorSpec(shape = (4,), dtype=tf.float64, name="observation")
+
+tf.zeros(
+    shape = tf_env.time_step_spec().observation.shape,
+    dtype= tf_env.time_step_spec().observation.dtype,
+    name = tf_env.time_step_spec().observation.shape
+)
 
 # +
 actor_nn_arch = (
@@ -168,13 +185,10 @@ def create_critic_model():
 # ## Definition of metrics
 
 # +
-train_tensor = tf.constant(train[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values, dtype=np.float32)
-eval_df_tensor = tf.constant(eval_df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values, dtype=np.float32)
-
-def calculate_u_metric(df, tensor, model, boundary=0.0):
+def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
   
-    actions = np.argmax(model(tensor).numpy(), axis=1)
+    actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values).numpy(), axis=1)
     assert not np.isnan(np.sum(actions))
     
 #     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
@@ -228,15 +242,8 @@ class ACAgent():
 
         actor_step_size = kwargs.get("actor_step_size")
         critic_step_size = kwargs.get("critic_step_size")
-#         self.t_beta = kwargs.get("t_beta", 0.00001)
-#         self.t_alpha = kwargs.get("t_alpha", 100)
-#         self.t_epsilon = kwargs.get("t_epsilon", 0.001)
-        self.verbose = kwargs.get("verbose", False)
-        self.debug = kwargs.get("debug", False)
-
         self.tau = tf.constant(kwargs.get("tau", 1), dtype=np.float64)
-        self.reward_multiplicator = tf.constant(
-            kwargs.get("reward_multiplicator", 1), dtype=np.float64)
+        self.observation_spec = kwargs.get("observation_spec", tf_env.time_step_spec().observation)
 
         self.actor_optimizer = keras.optimizers.Adam(
             learning_rate=actor_step_size)
@@ -247,172 +254,172 @@ class ACAgent():
             0, dtype=np.float64, name="reward", trainable=False)
         self.delta = tf.Variable(
             0, dtype=np.float64, name="delta", trainable=False)
-        self.prev_observation = None
+        self.prev_observation = tf.Variable(tf.zeros_initializer()(
+                                            shape=(1, self.observation_spec.shape[0]),
+                                            dtype=self.observation_spec.dtype,
+
+                                            ), name=self.observation_spec.name,
+                                            trainable=False)
         self.prev_action = tf.Variable(
-            0, dtype=np.int8, name="prev_action", trainable=False)
-
-
-#         self.counter = 0
+            0, dtype=np.int32, name="prev_action", trainable=False)
 
     def init(self, time_step):
         observation = time_step.observation
 
-        if self.debug:
-            tf.debugging.assert_all_finite(
-                observation, "observation contains non finite number")
+        probs = self.policy(observation)[0]
 
-        probs = self.policy(observation).numpy()[0]
+        action = tfp.distributions.Bernoulli(
+            probs=probs[1], dtype=tf.int32).sample()
 
-        if self.verbose:
-            print("init actor_prediction probs", probs)
-
-        action = np.random.choice(
-            [0, 1],
-            p=probs
-        )
-
-        if self.verbose:
-            print("init action", action)
-
-        self.prev_observation = observation
+        self.prev_observation.assign(observation)
         self.prev_action.assign(action)
-
-#         self.update_tau()
 
         return action
 
-#     def update_tau(self):
-
-# #         self.tau = (
-# #             1
-# #                 np.array(-self.counter*self.t_beta, dtype=np.float64)
-# #             )
-# #         )
-
-
-#         if self.verbose:
-#             print("update tau", self.tau)
-
-#         self.counter += 1
-
-
     def policy(self, observation):
-        #         return self.actor_model(observation)
-        if self.verbose:
-            print("logging from policy\n\n")
-            print("observation", self.actor_model(observation))
-            print("tau", self.tau)
-            print("actor model % tau", self.actor_model(observation)/self.tau)
-            print("policy", tf.nn.softmax(
-                self.actor_model(observation)/self.tau))
         return tf.nn.softmax(self.actor_model(observation)/self.tau)
 
     def train(self, time_step):
         observation = time_step.observation
 
-        reward = tf.dtypes.cast(tf.reshape(time_step.reward, shape=()), tf.float64)
-        
-        if self.debug:
-            tf.debugging.assert_all_finite(
-                observation, "observation contains non finite number")
-            tf.debugging.assert_all_finite(
-                reward, "reward contains non finite number")
+        observation_reward = tf.dtypes.cast(tf.reshape(
+            time_step.reward, shape=()), tf.float64)
 
-        self.update_avg_reward(reward)
-        self.update_td_error(reward, observation)
-        self.update_critic_model()
-        self.update_actor_model()
-
-        probs = self.policy(observation).numpy()[0]
-        if self.verbose:
-            print(probs)
-
-        action = np.random.choice(
-            [0, 1],
-            p=probs
-        )
-
-        self.prev_action.assign(action)
-        self.prev_observation = observation
-#         self.update_tau()
-
-        return action
-
-    def update_avg_reward(self, observation_reward):
+        # self.update_avg_reward(reward)
+        # inlined from the function
         self.reward.assign(
-            self.avg_reward_step_size_remainer*self.reward + 
-            self.avg_reward_step_size * observation_reward*self.reward_multiplicator
-        )
-        
-        if self.debug:
-            assert not np.isnan(self.reward.numpy())
-
-    def update_td_error(self, observation_reward, observation):
-        self.delta.assign(
-            observation_reward * self.reward_multiplicator
-            - self.reward
-            + self.critic_model(observation).numpy()[0][0]
-            - self.critic_model(self.prev_observation).numpy()[0][0]
+            self.avg_reward_step_size_remainer*self.reward +
+            self.avg_reward_step_size * observation_reward
         )
 
-        if self.debug:
-            assert not np.isnan(self.delta.numpy())
+        ### self.update_td_error(reward, observation)
+        # inlined from the function
+        delta = (observation_reward
+                 - self.reward
+                 + self.critic_model(observation)[0][0]
+                 - self.critic_model(self.prev_observation)[0][0]
+                 )
 
-    def update_critic_model(self):
+        self.delta.assign(delta)
+
+        # self.update_critic_model()
+        # inlined from the function
         with tf.GradientTape() as tape:
             grad = [-1*self.delta * g for g in tape.gradient(
                 self.critic_model(self.prev_observation),
                 self.critic_model.trainable_variables
             )]
 
-            if self.debug:
-                for tensor in grad:
-                    tf.debugging.assert_all_finite(
-                        tensor, "critic gradient contains non finite number")
-
             self.critic_optimizer.apply_gradients(
-                    zip(grad, self.critic_model.trainable_variables),
-                    experimental_aggregate_gradients=False
-                )   
+                zip(grad, self.critic_model.trainable_variables),
+                experimental_aggregate_gradients=False
+            )
 
-            
-            if self.debug:
-                for tensor in self.critic_model.trainable_variables:
-                    tf.debugging.assert_all_finite(
-                        tensor, "critic contains non finite number")
+        # self.update_actor_model()
+        # inlined from the function
 
-    def update_actor_model(self):
         prev_action = self.prev_action
         with tf.GradientTape() as tape:
 
             grad = [-1 * self.delta * g for g in tape.gradient(
                 tf.math.log(tf.nn.softmax(self.actor_model(
-                    self.prev_observation)/self.tau)[0][self.prev_action.numpy()]),
+                    self.prev_observation)/self.tau)[0][self.prev_action]),
                 self.actor_model.trainable_variables
             )]
-
-#             last_layer_w = grad[-2].numpy()
-#             last_layer_w[:, prev_action] = 0
-#             grad[-2] = tf.constant(last_layer_w, dtype=np.float64)
-
-#             last_layer_b = grad[-1].numpy()
-#             last_layer_b[prev_action] = 0
-#             grad[-1] = tf.constant(last_layer_b, dtype=np.float64)
-
-            if self.debug:
-                for tensor in grad:
-                    tf.debugging.assert_all_finite(
-                        tensor, "actor gradient contains non finite number")
 
             self.actor_optimizer.apply_gradients(
                 zip(grad, self.actor_model.trainable_variables),
                 experimental_aggregate_gradients=False
             )
-            
-            if self.debug:
-                for tensor in self.actor_model.trainable_variables:
-                    tf.debugging.assert_all_finite(
-                        tensor, "actor model contains non finite number")
+
+        probs = self.policy(observation)[0]
+
+        action = tfp.distributions.Bernoulli(
+            probs=probs[1], dtype=tf.int32).sample()
+
+        self.prev_action.assign(action)
+        self.prev_observation.assign(observation)
+
+        return action
+
+#     def update_avg_reward(self, observation_reward):
+#         self.reward.assign(
+#             self.avg_reward_step_size_remainer*self.reward +
+#             self.avg_reward_step_size * observation_reward
+#         )
+
+#         if self.debug:
+#             assert not np.isnan(self.reward.numpy())
+
+#     def update_td_error(self, observation_reward, observation):
+#         delta = (observation_reward
+#                  - self.reward
+#                  + self.critic_model(observation)[0][0]
+#                  - self.critic_model(self.prev_observation)[0][0]
+#                  )
+
+#         if self.verbose:
+#             print("DELTA: ------------------", delta)
+
+#         self.delta.assign(delta)
+
+#         if self.debug:
+#             assert not np.isnan(self.delta.numpy())
+
+#     def update_critic_model(self):
+#         with tf.GradientTape() as tape:
+#             grad = [-1*self.delta * g for g in tape.gradient(
+#                 self.critic_model(self.prev_observation),
+#                 self.critic_model.trainable_variables
+#             )]
+
+#             if self.debug:
+#                 for tensor in grad:
+#                     tf.debugging.assert_all_finite(
+#                         tensor, "critic gradient contains non finite number")
+
+#             self.critic_optimizer.apply_gradients(
+#                 zip(grad, self.critic_model.trainable_variables),
+#                 experimental_aggregate_gradients=False
+#             )
+
+#             if self.debug:
+#                 for tensor in self.critic_model.trainable_variables:
+#                     tf.debugging.assert_all_finite(
+#                         tensor, "critic contains non finite number")
+
+#     def update_actor_model(self):
+#         prev_action = self.prev_action
+#         with tf.GradientTape() as tape:
+
+#             grad = [-1 * self.delta * g for g in tape.gradient(
+#                 tf.math.log(tf.nn.softmax(self.actor_model(
+#                     self.prev_observation)/self.tau)[0][self.prev_action]),
+#                 self.actor_model.trainable_variables
+#             )]
+
+# #             last_layer_w = grad[-2].numpy()
+# #             last_layer_w[:, prev_action] = 0
+# #             grad[-2] = tf.constant(last_layer_w, dtype=np.float64)
+
+# #             last_layer_b = grad[-1].numpy()
+# #             last_layer_b[prev_action] = 0
+# #             grad[-1] = tf.constant(last_layer_b, dtype=np.float64)
+
+#             if self.debug:
+#                 for tensor in grad:
+#                     tf.debugging.assert_all_finite(
+#                         tensor, "actor gradient contains non finite number")
+
+#             self.actor_optimizer.apply_gradients(
+#                 zip(grad, self.actor_model.trainable_variables),
+#                 experimental_aggregate_gradients=False
+#             )
+
+#             if self.debug:
+#                 for tensor in self.actor_model.trainable_variables:
+#                     tf.debugging.assert_all_finite(
+#                         tensor, "actor model contains non finite number")
 # -
 # ### Agent Test
 
@@ -457,37 +464,52 @@ agent_test = ACAgent(
     avg_reward_step_size=0.1,
     actor_step_size=0.1,
     critic_step_size=0.1,
-    verbose=True
+    observation_spec = tf.TensorSpec(shape = (4,), dtype=tf.float64, name="observation")
 )
+# agent_test.init = tf.function(agent_test.init, autograph = False, experimental_relax_shapes = True)
+
+agent_test.train = tf.function(agent_test.train, autograph = False, experimental_relax_shapes = True)
+
+# agent_test.update_td_error = tf.function(agent_test.update_td_error)
+
 
 test_action = agent_test.init(TimeStep(
-    step_type=tf.constant([0], dtype=np.int32),
-    reward=tf.constant([0], dtype=np.float32),
-    discount=tf.constant([1], dtype=np.float32),
-    observation=tf.constant(np.array([[1, 1, 1, 1]]), dtype=np.float64))
+    step_type=tf.constant([0], dtype=np.int32, name="step_type"),
+    reward=tf.constant([0.0], dtype=np.float32, name="reward"),
+    discount=tf.constant([1], dtype=np.float32, name="discount"),
+    observation=tf.constant(np.array([[1, 2, 1, 2]]), dtype=np.float64, name="observation")
+    )
 )
 
-assert test_action == 0
+# print("test_action: ________" , test_action)
+# assert test_action.numpy() == 0
 
-agent_test.update_avg_reward(1)
-assert agent_test.reward == 0.1
-agent_test.update_avg_reward(1)
-assert agent_test.reward == 0.19
-agent_test.update_avg_reward(1)
-assert agent_test.reward == 0.271
+# agent_test.update_avg_reward(1)
+# assert agent_test.reward == 0.1
+# agent_test.update_avg_reward(1)
+# assert agent_test.reward == 0.19
+# agent_test.update_avg_reward(1)
+# assert agent_test.reward == 0.271
 
-agent_test.update_td_error(1, tf.constant(
-    np.array([[1, 1, 0, 0]]), dtype=np.float64))
-assert agent_test.delta == -7.271000000000001
+# agent_test.update_td_error(1, tf.constant(
+#     np.array([[1, 1, 0, 0]]), dtype=np.float64))
+
+
+# print("delta: _______", agent_test.delta.numpy())
+# assert agent_test.delta.numpy() == -7.271000000000001
 
 test_action = agent_test.train(TimeStep(
-    step_type=tf.constant([0], dtype=np.int32),
-    reward=np.array(0.0, dtype=np.float32),
-    discount=tf.constant([1], dtype=np.float32),
-    observation=tf.constant(np.array([[1, 2, 1, 2]]), dtype=np.float64))
+    step_type=tf.constant([0], dtype=np.int32, name="step_type"),
+    reward=tf.constant([5.0], dtype=np.float32, name="reward"),
+    discount=tf.constant([1], dtype=np.float32, name="discount"),
+    observation=tf.constant([[1, 2, 1, 2]], dtype=np.float64, name="observation"))
 )
+
+
 # -
 
+
+agent_test.delta.numpy()
 
 # ## Running of the experiment
 
@@ -502,9 +524,11 @@ agent = ACAgent(
     avg_reward_step_size=avg_reward_step_size,
     actor_step_size=actor_step_size,
     critic_step_size=critic_step_size,
-    tau = tau,
-    reward_multiplicator = reward_multiplicator
+    tau = tau
 )
+
+agent.train = tf.function(agent.train)
+agent.init = tf.function(agent.init)
 
 def run_experiment():
     with mlflow.start_run():
@@ -518,7 +542,6 @@ def run_experiment():
         mlflow.log_param("critic_dropout", critic_dropout)
         mlflow.log_param("actor_dropout", actor_dropout)
         mlflow.log_param("tau", tau)
-        mlflow.log_param("reward_multiplicator", reward_multiplicator)
     
         t = time.localtime()
         current_time = time.strftime("%H:%M:%S", t)
@@ -532,20 +555,20 @@ def run_experiment():
                 action = agent.train(time_step)
                 counter += 1
 
-                if counter % 100000 == 0:
+                if counter % 100 == 0:
                     t = time.localtime()
                     current_time = time.strftime("%H:%M:%S", t)
                     print(epoch, counter, current_time)
-                    # t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
-                    # t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
-                    # mlflow.log_metrics({
-                    #     "t_eval": t_eval,
-                    #     "u_eval": u_eval,
-                    #     "t_train": t_train,
-                    #     "u_train": u_train,
-                    #     "ratio_of_ones_eval": ratio_of_ones_eval,
-                    #     "ratio_of_ones_train": ratio_of_ones_train
-                    # })
+                    t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
+                    t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
+                    mlflow.log_metrics({
+                        "t_eval": t_eval,
+                        "u_eval": u_eval,
+                        "t_train": t_train,
+                        "u_train": u_train,
+                        "ratio_of_ones_eval": ratio_of_ones_eval,
+                        "ratio_of_ones_train": ratio_of_ones_train
+                    })
         agent.actor_model.save("./actor_model")         
         subprocess.run(["zip", "-r", "model.zip", "actor_model"])
         mlflow.log_artifact("model.zip")
