@@ -54,14 +54,17 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### General hyperparams
 
 # +
-avg_reward_step_size = 1e-3
-actor_step_size = 5e-7
-critic_step_size = 5e-7
-number_of_episodes = 2
+avg_reward_step_size = 1e-2
+actor_step_size = 1e-6
+critic_step_size = 1e-5
+number_of_episodes = 3
 
 t_beta = 0.00001
 t_alpha = 100
 t_epsilon = 0.001
+
+tau = 0.5
+reward_multiplicator = 100
 # -
 
 # ### Defining Architecture of actor and critic
@@ -69,15 +72,18 @@ t_epsilon = 0.001
 # +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    256,
+    512,
     128,
-    32,
+    64,
     2
 )
 
+actor_dropout = 0.3
+critic_dropout = 0.3
+
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    256,
+    512,
     128,
     64,
     1
@@ -93,14 +99,14 @@ def create_actor_model():
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/actor_nn_arch[0], seed=1)
         ),
-        layers.Dropout(0.3),
+        layers.Dropout(actor_dropout),
         layers.Dense(
             actor_nn_arch[2],
             activation="relu",
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/actor_nn_arch[1], seed=2)
         ),
-        layers.Dropout(0.3),
+        layers.Dropout(actor_dropout),
         layers.Dense(
             actor_nn_arch[3],
             activation="relu",
@@ -108,7 +114,7 @@ def create_actor_model():
                 mean=0.0, stddev=1/actor_nn_arch[2], seed=3
             )
         ),
-        layers.Dropout(0.3),
+        layers.Dropout(actor_dropout),
         layers.Dense(
             actor_nn_arch[4],
             kernel_initializer=tf.keras.initializers.RandomNormal(
@@ -128,21 +134,21 @@ def create_critic_model():
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/critic_nn_arch[0], seed=11)
         ),
-        layers.Dropout(0.3),
+        layers.Dropout(critic_dropout),
         layers.Dense(
             critic_nn_arch[2],
             activation="relu",
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/critic_nn_arch[1], seed=12)
         ),
-        layers.Dropout(0.3),
+        layers.Dropout(critic_dropout),
         layers.Dense(
             critic_nn_arch[3],
             activation="relu",
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/critic_nn_arch[2], seed=13)
         ),
-        layers.Dropout(0.3),
+        layers.Dropout(critic_dropout),
         layers.Dense(
             critic_nn_arch[4],
             kernel_initializer=tf.keras.initializers.RandomNormal(
@@ -157,15 +163,24 @@ def create_critic_model():
 
 # ## Definition of metrics
 
-def calculate_u_metric(df, model):
+# +
+def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
   
-    actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values). numpy(), axis=1)
+    actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values).numpy(), axis=1)
     assert not np.isnan(np.sum(actions))
     
-    print("np_sum(actions)", np.sum(actions))
+#     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
+#     probs_df = pd.DataFrame(probs, columns=["0", "1"])
+#     probs_df["probs_diff"] = probs_df["1"] - probs_df["0"]
+#     probs_df["action"] = probs_df["probs_diff"] > boundary
+#     probs_df["action"] = probs_df["action"].astype("int")
     
-    df["action"] = pd.Series(data=actions, index = df.index)
+    sum_of_actions = np.sum(actions)
+    print("np_sum(actions)", sum_of_actions)
+    
+#     df["action"] = probs_df["action"]
+    df["action"] = pd.Series(data=actions, index=df.index)
     df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
     df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
 
@@ -184,12 +199,17 @@ def calculate_u_metric(df, model):
     
     u = np.min([np.max([t, 0]), 6]) * sum_of_pi
     print("u: {u}".format(u = u) )
+    
+    ratio_of_ones = sum_of_actions/len(actions)
             
-    return t, u
+    return t, u, ratio_of_ones
 
+
+# -
 
 # ## AC Agent
 
+# +
 class ACAgent():
     def __init__(self, **kwargs):
         self.actor_model = kwargs.get("actor_model")
@@ -202,6 +222,9 @@ class ACAgent():
         self.t_alpha = kwargs.get("t_alpha", 100)
         self.t_epsilon = kwargs.get("t_epsilon", 0.001)
         self.verbose = kwargs.get("verbose", False)
+        
+        self.tau = kwargs.get("tau", 1)
+        self.reward_multiplicator = kwargs.get("reward_multiplicator", 1)
 
         self.actor_optimizer = keras.optimizers.Adam(
             learning_rate=actor_step_size)
@@ -214,7 +237,7 @@ class ACAgent():
         self.prev_action = None
 
         self.counter = 0
-        self.tau = 1
+
 
     def init(self, time_step):
         observation = time_step.observation
@@ -244,13 +267,12 @@ class ACAgent():
 
     def update_tau(self):
 
-        self.tau = (
-            1
-            + self.t_epsilon
-            + self.t_alpha * tf.math.exp(
-                np.array(-self.counter*self.t_beta, dtype=np.float64)
-            )
-        )
+#         self.tau = (
+#             1
+#                 np.array(-self.counter*self.t_beta, dtype=np.float64)
+#             )
+#         )
+
         
         if self.verbose:
             print("update tau", self.tau)
@@ -298,12 +320,12 @@ class ACAgent():
 
     def update_avg_reward(self, observation_reward):
         self.reward = np.array((1-self.avg_reward_step_size)*self.reward +
-                               self.avg_reward_step_size * observation_reward, dtype=np.float64)
+                               self.avg_reward_step_size * observation_reward * self.reward_multiplicator, dtype=np.float64)
         assert not np.isnan(self.reward)
 
     def update_td_error(self, observation_reward, observation):
         self.delta = np.array(
-            observation_reward
+            observation_reward * self.reward_multiplicator
             - self.reward
             + self.critic_model(observation).numpy()[0][0]
             - self.critic_model(self.prev_observation).numpy()[0][0],
@@ -314,8 +336,8 @@ class ACAgent():
 
     def update_critic_model(self, observation):
         with tf.GradientTape() as tape:
-            grad = [-1 * self.delta * g for g in tape.gradient(
-                self.critic_model(observation),
+            grad = [-1*self.delta * g for g in tape.gradient(
+                self.critic_model(self.prev_observation),
                 self.critic_model.trainable_variables
             )]
 
@@ -341,7 +363,7 @@ class ACAgent():
         prev_action = self.prev_action
         with tf.GradientTape() as tape:
 
-            grad = [-1 * self.delta * g for g in tape.gradient(
+            grad = [ -1 * self.delta * g for g in tape.gradient(
                 tf.math.log(tf.nn.softmax(self.actor_model(self.prev_observation)/self.tau)[0][self.prev_action]),
                 self.actor_model.trainable_variables
             )]
@@ -371,6 +393,7 @@ class ACAgent():
             for tensor in self.actor_model.trainable_variables:
                 tf.debugging.assert_all_finite(
                     tensor, "actor model contains non finite number")
+# -
 # ### Agent Test
 
 
@@ -443,6 +466,8 @@ test_action = agent_test.train(TimeStep(
     discount=tf.constant([1], dtype=np.float32),
     observation=tf.constant(np.array([[1, 2, 1, 2]]), dtype=np.float64))
 )
+
+
 # -
 
 
@@ -453,13 +478,18 @@ test_action = agent_test.train(TimeStep(
 # +
 # %%time
 
-agent = ACAgent(
-    actor_model=create_actor_model(),
-    critic_model=create_critic_model(),
-    avg_reward_step_size=avg_reward_step_size,
-    actor_step_size=actor_step_size,
-    critic_step_size=critic_step_size
-)
+# agent = ACAgent(
+#     actor_model=create_actor_model(),
+#     critic_model=create_critic_model(),
+#     avg_reward_step_size=avg_reward_step_size,
+#     actor_step_size=actor_step_size,
+#     critic_step_size=critic_step_size,
+#     tau = tau,
+#     reward_multiplicator = reward_multiplicator
+# )
+
+# agent.train = tf.function(agent.train)
+# agent.init = tf.function(agent.init)
 
 def run_experiment():
     with mlflow.start_run():
@@ -470,6 +500,11 @@ def run_experiment():
         mlflow.log_param("avg_reward_step_size", avg_reward_step_size)
         mlflow.log_param("actor_step_size", actor_step_size)
         mlflow.log_param("critic_step_size", critic_step_size)
+        mlflow.log_param("critic_dropout", critic_dropout)
+        mlflow.log_param("actor_dropout", actor_dropout)
+        mlflow.log_param("tau", tau)
+        mlflow.log_param("reward_multiplicator", reward_multiplicator)
+        mlflow.log_param("run", 2)
     
         t = time.localtime()
         current_time = time.strftime("%H:%M:%S", t)
@@ -483,21 +518,23 @@ def run_experiment():
                 action = agent.train(time_step)
                 counter += 1
 
-                if counter % 10000 == 0:
+                if counter % 100000 == 0:
                     t = time.localtime()
                     current_time = time.strftime("%H:%M:%S", t)
                     print(epoch, counter, current_time)
-                    t_eval, u_eval = calculate_u_metric(eval_df, agent.actor_model)
-                    t_train, u_train = calculate_u_metric(train, agent.actor_model)
+                    t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
+                    t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
                     mlflow.log_metrics({
                         "t_eval": t_eval,
                         "u_eval": u_eval,
                         "t_train": t_train,
-                        "u_train": u_train
+                        "u_train": u_train,
+                        "ratio_of_ones_eval": ratio_of_ones_eval,
+                        "ratio_of_ones_train": ratio_of_ones_train
                     })
-        agent.actor_model.save("./actor_model")         
-        subprocess.run(["zip", "-r", "model.zip", "actor_model"])
-        mlflow.log_artifact("model.zip")
+            agent.actor_model.save("./actor_model")         
+            subprocess.run(["zip", "-r", "model_{epoch}.zip".format(epoch=epoch), "actor_model"])
+            mlflow.log_artifact("model_{epoch}.zip".format(epoch=epoch))
 
 
 run_experiment()
@@ -554,5 +591,25 @@ grad
 # -
 
 actor_model_test(test_observation)[0][1]
+
+agent.actor_model.save("model_2")
+
+calculate_u_metric(train, agent.actor_model)
+
+calculate_u_metric(train, agent.actor_model)
+
+calculate_u_metric(train, agent.actor_model, boundary=0.9)
+
+probs = tf.nn.softmax(agent.actor_model(train[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
+
+probs_ds = pd.DataFrame(data=probs, columns=["0", "1"])
+
+probs_ds["prob_diff"] = probs_ds["1"] - probs_ds["0"]
+
+probs_ds["action"] = probs_ds["prob_diff"] > 0.8
+
+probs_ds["action"] = probs_ds["action"].astype("int")
+
+probs_ds["action"].sum()
 
 
