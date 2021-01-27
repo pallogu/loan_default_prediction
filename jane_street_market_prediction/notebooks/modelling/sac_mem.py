@@ -36,7 +36,7 @@ eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
 reward_multiplicator = 100
-negative_reward_multiplicator = 1000
+negative_reward_multiplicator = 100
 
 train_py_env = MarketEnv(
     trades = train,
@@ -70,25 +70,13 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 avg_reward_step_size = 1e-2
 actor_step_size = 1e-6
 critic_step_size = 1e-5
-number_of_episodes = 1
+number_of_episodes = 3
 
-tau = 10
+tau = 0.5
 
 # -
 
 # ### Defining Architecture of actor and critic
-
-tf_env.time_step_spec().observation
-
-tf_env.reset()
-
-tf.TensorSpec(shape = (4,), dtype=tf.float64, name="observation")
-
-tf.zeros(
-    shape = tf_env.time_step_spec().observation.shape,
-    dtype= tf_env.time_step_spec().observation.dtype,
-    name = tf_env.time_step_spec().observation.shape
-)
 
 # +
 actor_nn_arch = (
@@ -184,49 +172,46 @@ def create_critic_model():
 
 # ## Definition of metrics
 
-# +
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
-  
-    actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values).numpy(), axis=1)
-    assert not np.isnan(np.sum(actions))
-    
-#     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
-#     probs_df = pd.DataFrame(probs, columns=["0", "1"])
-#     probs_df["probs_diff"] = probs_df["1"] - probs_df["0"]
-#     probs_df["action"] = probs_df["probs_diff"] > boundary
-#     probs_df["action"] = probs_df["action"].astype("int")
-    
-    sum_of_actions = np.sum(actions)
-    print("np_sum(actions)", sum_of_actions)
-    
-#     df["action"] = probs_df["action"]
-    df["action"] = pd.Series(data=actions, index=df.index)
-    df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
-    df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
+    with tf.device("/cpu:0"):
+        actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values).numpy(), axis=1)
+        assert not np.isnan(np.sum(actions))
 
-    tmp = df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+    #     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
+    #     probs_df = pd.DataFrame(probs, columns=["0", "1"])
+    #     probs_df["probs_diff"] = probs_df["1"] - probs_df["0"]
+    #     probs_df["action"] = probs_df["probs_diff"] > boundary
+    #     probs_df["action"] = probs_df["action"].astype("int")
+
+        sum_of_actions = np.sum(actions)
+        print("np_sum(actions)", sum_of_actions)
+
+    #     df["action"] = probs_df["action"]
+        df["action"] = pd.Series(data=actions, index=df.index)
+        df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
+        df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
+
+        tmp = df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+
+        sum_of_pi = tmp["trade_reward"].sum()
+        sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
+
+        print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
+
+        if sum_of_pi_x_pi == 0.0:
+            return 0, 0, 0
+
+        t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
+        # print("t: {t}".format(t = t) )
+
+        u = np.min([np.max([t, 0]), 6]) * sum_of_pi
+        print("u: {u}".format(u = u) )
+
+        ratio_of_ones = sum_of_actions/len(actions)
         
-    sum_of_pi = tmp["trade_reward"].sum()
-    sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
-    
-    print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
-    
-    if sum_of_pi_x_pi == 0.0:
-        return 0, 0
-    
-    t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
-    # print("t: {t}".format(t = t) )
-    
-    u = np.min([np.max([t, 0]), 6]) * sum_of_pi
-    print("u: {u}".format(u = u) )
-    
-    ratio_of_ones = sum_of_actions/len(actions)
-            
-    return t, u, ratio_of_ones
+        return t, u, ratio_of_ones
 
-
-# -
 
 # ## AC Agent
 
@@ -354,7 +339,7 @@ class ACAgent():
 #     def update_td_error(self, observation_reward, observation):
 #         delta = (observation_reward
 #                  - self.reward
-#                  + self.critic_model(observation)[0][0]
+
 #                  - self.critic_model(self.prev_observation)[0][0]
 #                  )
 
@@ -480,6 +465,8 @@ test_action = agent_test.init(TimeStep(
     observation=tf.constant(np.array([[1, 2, 1, 2]]), dtype=np.float64, name="observation")
     )
 )
+print("after init")
+print(agent_test.actor_model.trainable_variables)
 
 # print("test_action: ________" , test_action)
 # assert test_action.numpy() == 0
@@ -505,11 +492,24 @@ test_action = agent_test.train(TimeStep(
     observation=tf.constant([[1, 2, 1, 2]], dtype=np.float64, name="observation"))
 )
 
+print("after Train")
+
+print(agent_test.actor_model.trainable_variables)
+
+test_action = agent_test.train(TimeStep(
+    step_type=tf.constant([0], dtype=np.int32, name="step_type"),
+    reward=tf.constant([3.0], dtype=np.float32, name="reward"),
+    discount=tf.constant([1], dtype=np.float32, name="discount"),
+    observation=tf.constant([[1, 2, 1, 2]], dtype=np.float64, name="observation"))
+)
+
+print("after Train")
+
+print(agent_test.actor_model.trainable_variables)
+
 
 # -
 
-
-agent_test.delta.numpy()
 
 # ## Running of the experiment
 
@@ -555,7 +555,7 @@ def run_experiment():
                 action = agent.train(time_step)
                 counter += 1
 
-                if counter % 100 == 0:
+                if counter % 100000 == 0:
                     t = time.localtime()
                     current_time = time.strftime("%H:%M:%S", t)
                     print(epoch, counter, current_time)
