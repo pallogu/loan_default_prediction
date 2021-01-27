@@ -36,7 +36,7 @@ eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
 reward_multiplicator = 100
-negative_reward_multiplicator = 100
+negative_reward_multiplicator = 200
 
 train_py_env = MarketEnv(
     trades = train,
@@ -67,12 +67,12 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### General hyperparams
 
 # +
-avg_reward_step_size = 1e-2
+avg_reward_step_size = 1e-1
 actor_step_size = 1e-6
 critic_step_size = 1e-5
 number_of_episodes = 3
 
-tau = 0.5
+tau = 0.1
 
 # -
 
@@ -82,7 +82,7 @@ tau = 0.5
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
     1024,
-    128,
+    512,
     64,
     2
 )
@@ -93,7 +93,7 @@ critic_dropout = 0.3
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
     1024,
-    128,
+    512,
     64,
     1
 )
