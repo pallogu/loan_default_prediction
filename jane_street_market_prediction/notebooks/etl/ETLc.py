@@ -24,8 +24,8 @@ class ETL_1():
         self.fillna(row)
         self.normalise(row)
         return row
-    
-    
+
+
 class ETL_2():
     def __init__(self, **kwargs):
         self.columns_to_transform = kwargs.get("columns_to_transform")

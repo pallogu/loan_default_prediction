@@ -1,3 +1,10 @@
+# # Extract Transform Load
+
+# ## Library import
+
+# %load_ext autoreload
+# %autoreload 2
+
 # +
 import pandas as pd
 from sklearn.decomposition import PCA
@@ -7,10 +14,23 @@ import pickle
 from ETLc import ETL_1, ETL_2
 # -
 
+# ## Data Imports
+
 train = pd.read_csv("../../input/train.csv")
 
 valuation_data = train[train["date"] >=400]
 train = train[train["date"] < 400]
+
+train.head(10)
+
+test = valuation_data.copy()
+test.drop(columns=["resp", "resp_1", "resp_2", "resp_3", "resp_4"], inplace=True)
+
+test.head()
+
+
+
+# ## Feature definitions
 
 feats = ["feature_{count}".format(count = count) for count in range(1, 130)]
 rest_cols = [column for column in train.columns if column not in feats]
@@ -18,32 +38,35 @@ rest_cols = [column for column in train.columns if column not in feats]
 train_mean = train.mean()
 train_stddev = train.std()
 
+# ## Define ETLs
+
 etl_1 = ETL_1(
     initial_row=train_mean,
     mean = train_mean,
     stddev=train_stddev,
-    columns_to_transform=feats,
+    columns_to_transform=feats
 )
 
 # %%time
-train_trans_1  = train.apply(etl_1.fillna_normalize, axis=1)
+train_trans_1  = train[:1000].apply(etl_1.fillna_normalize, axis=1)
 
-pca = PCA(n_components=0.95)
+pca = PCA(n_components=40)
 pca.fit(train_trans_1[feats].values)
 
 etl_2 = ETL_2(
     columns_to_transform=feats,
     trans_cols_names= ["f_{i}".format(i=i) for i in range(40)],
-    columns_to_keep_train = ['date', 'weight'],
+    columns_to_keep_train = ['date', 'weight', 'resp', "feature_0"],
+    columns_to_keep = ["date", "weight", "feature_0"], 
     pca = pca
 )
 
 # %%time
-train_trans_2  = train_trans_1.apply(etl_2.reduce_columns_train, axis=1)
+train_trans_2  = train_trans_1[:100].apply(etl_2.reduce_columns_train, axis=1)
 
 train_trans_2
 
-train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
+# ## Save pickle files
 
 with open("./etl_1.pkl", "wb") as f:
     pickle.dump(etl_1, f)
@@ -52,16 +75,19 @@ with open("./etl_1.pkl", "wb") as f:
 with open("./etl_2.pkl", "wb") as f:
     pickle.dump(etl_2, f)
 
+# ## Save transformed Fiels
 
+train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
 
 val_trans_1 = valuation_data.apply(etl_1.fillna_normalize, axis=1)
-
 val_trans_2 = val_trans_1.apply(etl_2.reduce_columns_train, axis=1)
 
 val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
 
 val_trans_2[val_trans_2["date"] < 420
            ].shape
+
+# ## Tests
 
 # +
 # %%time
@@ -119,5 +145,10 @@ etl = ETL(
 
 test_df.apply(etl.transform, axis=1)
 # -
+test_trans_1 = test[:1000].apply(etl_1.fillna_normalize, axis=1)
+test_trans_2 = test_trans_1.apply(etl_2.reduce_columns, axis=1)
+
+
+test_trans_2
 
 
