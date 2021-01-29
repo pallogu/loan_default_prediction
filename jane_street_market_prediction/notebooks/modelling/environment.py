@@ -111,9 +111,9 @@ class MarketEnv(py_environment.PyEnvironment):
             reward = reward*self.negative_reward_multiplicator
         
         if self._episode_ended:
-            time_step = ts.termination(np.array(self._state, dtype = np.float64), reward)
+            time_step = ts.termination(np.array(self._state, dtype = np.float64), np.array(reward, dtype=np.float64))
         else:
-            time_step = ts.transition(np.array(self._state, dtype = np.float64), reward, discount = self.discount)
+            time_step = ts.transition(np.array(self._state, dtype = np.float64), np.array(reward, dtype=np.float64), discount=self.discount)
         
 
             
