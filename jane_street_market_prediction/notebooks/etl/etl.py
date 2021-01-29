@@ -21,14 +21,8 @@ train = pd.read_csv("../../input/train.csv")
 valuation_data = train[train["date"] >=400]
 train = train[train["date"] < 400]
 
-train.head(10)
-
 test = valuation_data.copy()
 test.drop(columns=["resp", "resp_1", "resp_2", "resp_3", "resp_4"], inplace=True)
-
-test.head()
-
-
 
 # ## Feature definitions
 
@@ -48,7 +42,7 @@ etl_1 = ETL_1(
 )
 
 # %%time
-train_trans_1  = train[:1000].apply(etl_1.fillna_normalize, axis=1)
+train_trans_1  = train.apply(etl_1.fillna_normalize, axis=1)
 
 pca = PCA(n_components=40)
 pca.fit(train_trans_1[feats].values)
@@ -62,9 +56,7 @@ etl_2 = ETL_2(
 )
 
 # %%time
-train_trans_2  = train_trans_1[:100].apply(etl_2.reduce_columns_train, axis=1)
-
-train_trans_2
+train_trans_2  = train_trans_1.apply(etl_2.reduce_columns_train, axis=1)
 
 # ## Save pickle files
 
@@ -83,9 +75,6 @@ val_trans_1 = valuation_data.apply(etl_1.fillna_normalize, axis=1)
 val_trans_2 = val_trans_1.apply(etl_2.reduce_columns_train, axis=1)
 
 val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
-
-val_trans_2[val_trans_2["date"] < 420
-           ].shape
 
 # ## Tests
 
