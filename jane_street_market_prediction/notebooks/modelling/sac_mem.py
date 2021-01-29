@@ -30,17 +30,19 @@ tf.keras.backend.set_floatx('float64')
 
 from environment import MarketEnv
 
-train = pd.read_csv("../etl/train_dataset_after_pca.csv")
-eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
+train = pd.read_csv("../etl/train_dataset_after_pca_5fd37b6.csv")
+eval_df = pd.read_csv("../etl/val_dataset_after_pca_5fd37b6.csv")
+
+train.head()
 
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
 reward_multiplicator = 100
-negative_reward_multiplicator = 200
+negative_reward_multiplicator = 103.9
 
 train_py_env = MarketEnv(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight", "feature_0"],
     reward_column = "resp",
     weight_column = "weight",
     discount=0.9,
@@ -50,12 +52,12 @@ train_py_env = MarketEnv(
 
 val_py_env = MarketEnv(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight", "feature_0"],
     reward_column = "resp",
     weight_column = "weight",
     discount=0.9,
-    reward_multiplicator = 1,
-    negative_reward_multiplicator = 1
+    reward_multiplicator = reward_multiplicator,
+    negative_reward_multiplicator = negative_reward_multiplicator
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
@@ -67,12 +69,12 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### General hyperparams
 
 # +
-avg_reward_step_size = 1e-1
+avg_reward_step_size = 1e-2
 actor_step_size = 1e-6
 critic_step_size = 1e-5
-number_of_episodes = 3
+number_of_episodes = 2
 
-tau = 0.1
+tau = 1
 
 # -
 
@@ -175,7 +177,7 @@ def create_critic_model():
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
     with tf.device("/cpu:0"):
-        actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values).numpy(), axis=1)
+        actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight", "feature_0"]].values).numpy(), axis=1)
         assert not np.isnan(np.sum(actions))
 
     #     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
