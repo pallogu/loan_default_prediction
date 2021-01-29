@@ -10,6 +10,7 @@ import pandas as pd
 from sklearn.decomposition import PCA
 import numpy as np
 import pickle
+import swifter
 
 from ETLc import ETL_1, ETL_2
 # -
@@ -42,7 +43,7 @@ etl_1 = ETL_1(
 )
 
 # %%time
-train_trans_1  = train.apply(etl_1.fillna_normalize, axis=1)
+train_trans_1  = train.swifter.apply(etl_1.fillna_normalize, axis=1)
 
 pca = PCA(n_components=40)
 pca.fit(train_trans_1[feats].values)
@@ -56,7 +57,7 @@ etl_2 = ETL_2(
 )
 
 # %%time
-train_trans_2  = train_trans_1.apply(etl_2.reduce_columns_train, axis=1)
+train_trans_2  = train_trans_1.swifter.apply(etl_2.reduce_columns_train, axis=1)
 
 # ## Save pickle files
 
@@ -71,8 +72,8 @@ with open("./etl_2.pkl", "wb") as f:
 
 train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
 
-val_trans_1 = valuation_data.apply(etl_1.fillna_normalize, axis=1)
-val_trans_2 = val_trans_1.apply(etl_2.reduce_columns_train, axis=1)
+val_trans_1 = valuation_data.swifter.apply(etl_1.fillna_normalize, axis=1)
+val_trans_2 = val_trans_1.swifter.apply(etl_2.reduce_columns_train, axis=1)
 
 val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
 
