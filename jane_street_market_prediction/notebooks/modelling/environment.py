@@ -56,6 +56,7 @@ class MarketEnv(py_environment.PyEnvironment):
         self.discount = kwargs.get("discount", 1)
         self.reward_multiplicator = kwargs.get("reward_multiplicator", 1)
         self.negative_reward_multiplicator = kwargs.get("negative_reward_multiplicator", 1)
+        self.include_weight = kwargs.get("include_weight", True)
         
         self.counter = 0
         
@@ -102,7 +103,11 @@ class MarketEnv(py_environment.PyEnvironment):
             self._episode_ended = True
             
         self._state = self.trades.iloc[self.counter + 1][self.features].values
-        reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column]*self.trades.iloc[self.counter][self.weight_column]
+        
+        if self.include_weight:
+            reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column]*self.trades.iloc[self.counter][self.weight_column]
+        else:
+            reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column]
         
         if reward > 0:
             reward = reward*self.reward_multiplicator

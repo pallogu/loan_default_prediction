@@ -34,13 +34,14 @@ eval_df = pd.read_csv("../etl/val_dataset_after_pca_5fd37b6.csv")
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
 reward_multiplicator = 100
-negative_reward_multiplicator = 103.9
+negative_reward_multiplicator = 100
 
 train_py_env = MarketEnv(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight", "feature_0"],
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0"],
     reward_column = "resp",
     weight_column = "weight",
+    include_weight = False,
     discount=0.9,
     reward_multiplicator = reward_multiplicator,
     negative_reward_multiplicator = negative_reward_multiplicator
@@ -48,9 +49,10 @@ train_py_env = MarketEnv(
 
 val_py_env = MarketEnv(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight", "feature_0"],
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0"],
     reward_column = "resp",
     weight_column = "weight",
+    include_weight = False,
     discount=0.9,
     reward_multiplicator = reward_multiplicator,
     negative_reward_multiplicator = negative_reward_multiplicator
@@ -67,7 +69,7 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # +
 avg_reward_step_size = 1e-2
 actor_step_size = 1e-6
-critic_step_size = 1e-5
+critic_step_size = 1e-6
 number_of_episodes = 2
 
 tau = 1
@@ -79,18 +81,18 @@ tau = 1
 # +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    64,
+    128,
     64,
     2
 )
 
-actor_dropout = 0.3
-critic_dropout = 0.3
+actor_dropout = 0.1
+critic_dropout = 0.1
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    32,
-    32,
+    128,
+    64,
     1
 )
 
@@ -158,7 +160,9 @@ create_critic_model().summary()
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
     with tf.device("/cpu:0"):
-        actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight", "feature_0"]].values).numpy(), axis=1)
+        to_predict = df[["f_{i}".format(i=i) for i in range(40)] + ["feature_0"]].values
+        
+        actions = np.argmax(model(to_predict.reshape((to_predict.shape[0], 1, to_predict.shape[1]))).numpy(), axis=1)
         assert not np.isnan(np.sum(actions))
 
     #     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
@@ -196,12 +200,7 @@ def calculate_u_metric(df, model, boundary=0.0):
         return t, u, ratio_of_ones
 
 
-model.summary()
-
 # ## AC Agent
-
-foo.reshape((1, 1, 4))
-
 
 class ACAgent():
     def __init__(self, **kwargs):
@@ -317,7 +316,6 @@ class ACAgent():
         return action
 
 
-
 # ## Running of the experiment
 
 # +
@@ -347,6 +345,7 @@ def run_experiment():
         mlflow.log_param("critic_dropout", critic_dropout)
         mlflow.log_param("actor_dropout", actor_dropout)
         mlflow.log_param("tau", tau)
+        mlflow.log_param("included_weight", false)
     
         t = time.localtime()
         current_time = time.strftime("%H:%M:%S", t)
@@ -381,13 +380,4 @@ def run_experiment():
 with tf.device("/cpu:0"):
     run_experiment()
 # -
-
-
-
-
-
-
-
-
-
 
