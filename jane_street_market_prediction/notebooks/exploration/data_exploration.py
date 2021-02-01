@@ -24,7 +24,15 @@ non_features
 
 train[['resp_1', 'resp_2', 'resp_3', 'resp_4', 'resp']].describe()
 
-features
+train[train["resp"] >0].shape[0]/train.shape[0]
+
+train[train["resp"] >0][["resp"]].describe()
+
+train[train["resp"] < 0][["resp"]].describe()
+
+1.523521/1.466193
+
+
 
 train[feats[:3] + ["date", "resp", "ts_id"]][:10].values
 

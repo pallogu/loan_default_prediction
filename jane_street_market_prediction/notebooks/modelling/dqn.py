@@ -72,7 +72,7 @@ val_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### Hyperparameters
 
 # +
-num_iterations = train.shape[0]*2
+num_iterations = train.shape[0]
 
 initial_collect_steps = 100
 collect_steps_per_iteration = 1
@@ -214,7 +214,7 @@ def run_experiment():
         mlflow.log_param("learning_rate", learning_rate)
         mlflow.set_tag("data_set", "initial_dataset_after_pca")
         mlflow.log_param("discount", discount)
-        mlflow.log_param("run", 1)
+        mlflow.log_param("run", 2)
         
         agent.train = common.function(agent.train)
         
@@ -238,13 +238,14 @@ def run_experiment():
                 t, u = calculate_u_metric(val_env, agent.policy)
                 mlflow.log_metric("u_metric", u)
                 mlflow.log_metric("t_metric", t)
+                mlflow.log_metric("step", step)
 
 # %%time
 run_experiment()
 
 saver = PolicySaver(agent.policy, batch_size=None)
 
-saver.save("model_dqn_32_32_075.policy")
+saver.save("model_dqn_32_32_075_short_2.policy")
 
 
 
