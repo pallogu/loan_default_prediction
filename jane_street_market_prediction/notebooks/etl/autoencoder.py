@@ -18,6 +18,8 @@ features = [c for c in train.columns.values if "feature" in c][1:]
 train_active = train[features]
 val_active = val[features]
 
+val_active
+
 
 # ## Definition of auto-encoder
 
@@ -84,19 +86,48 @@ def create_autoencoder(num_target):
     encoder = tf.keras.Model(inputs = input_dim, outputs = encoded4)
     
     return autoencoder, encoder
-    
+
 
 autoencoder, encoder = create_autoencoder(60)
 
+autoencoder.summary()
+
+encoder.summary()
+
+
+
 autoencoder.compile(optimizer = 'adam', loss='mean_squared_error')
 
+callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=3)
 autoencoder.fit(
-    train_active.values,
-    train_active.values,
-    epochs= 20,
-    batch_size = 128,
-    shuffle = False,
-    validation_data = (val_active.values, val_active.values)
-)
+        train_active.values,
+        train_active.values,
+        epochs= 100,
+        batch_size = 128,
+        shuffle = False,
+        validation_data = (val_active.values, val_active.values),
+        callbacks=[callback]
+    )
+
+
+
+
+
+# +
+callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=3)
+
+
+autoencoder.fit = tf.function(autoencoder.fit)
+
+with tf.device("/cpu:0"):
+    fit_history = autoencoder.fit(
+        train_active.values,
+        train_active.values,
+        epochs= 20,
+        batch_size = 128,
+        shuffle = False,
+        validation_data = (val_active.values, val_active.values)
+    )
+# -
 
 

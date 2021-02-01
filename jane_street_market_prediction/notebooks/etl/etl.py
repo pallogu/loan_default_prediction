@@ -42,6 +42,14 @@ etl_1 = ETL_1(
     columns_to_transform=feats
 )
 
+with open("./etl_1.pkl", "wb") as f:
+    pickle.dump(etl_1, f)
+
+
+with open("./etl_1.pkl", "rb") as f:
+    etl_1 = pickle.load(f)
+    f.close()
+
 # %%time
 train_trans_1  = train.swifter.apply(etl_1.fillna_normalize, axis=1)
 
@@ -56,17 +64,15 @@ etl_2 = ETL_2(
     pca = pca
 )
 
-# %%time
-train_trans_2  = train_trans_1.swifter.apply(etl_2.reduce_columns_train, axis=1)
-
-# ## Save pickle files
-
-with open("./etl_1.pkl", "wb") as f:
-    pickle.dump(etl_1, f)
-
-
 with open("./etl_2.pkl", "wb") as f:
     pickle.dump(etl_2, f)
+
+with open("./etl_2.pkl", "rb") as f:
+    etl_2 = pickle.load(f)
+    f.close()
+
+# %%time
+train_trans_2  = train_trans_1.swifter.apply(etl_2.reduce_columns_train, axis=1)
 
 # ## Save transformed Fiels
 
@@ -81,7 +87,7 @@ val_trans_1.to_csv("./val_dataset.csv", index=False)
 
 val_trans_2 = val_trans_1.swifter.apply(etl_2.reduce_columns_train, axis=1)
 
-val_trans_1.to_csv("./val_dataset_after_pca.csv", index=False)
+val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
 
 # ## Tests
 
