@@ -70,12 +70,18 @@ with open("./etl_2.pkl", "wb") as f:
 
 # ## Save transformed Fiels
 
+train_trans_1.to_csv("./train_dataset.csv", index=False)
+
 train_trans_2.to_csv("./train_dataset_after_pca.csv", index=False)
 
 val_trans_1 = valuation_data.swifter.apply(etl_1.fillna_normalize, axis=1)
+
+
+val_trans_1.to_csv("./val_dataset.csv", index=False)
+
 val_trans_2 = val_trans_1.swifter.apply(etl_2.reduce_columns_train, axis=1)
 
-val_trans_2.to_csv("./val_dataset_after_pca.csv", index=False)
+val_trans_1.to_csv("./val_dataset_after_pca.csv", index=False)
 
 # ## Tests
 

@@ -18,8 +18,8 @@ if len(gpus):
     tf.config.experimental.set_memory_growth(gpus[0], True)
 
 # +
-seed(42)
-set_seed(42)
+seed(500)
+set_seed(500)
 
 tf.keras.backend.set_floatx('float64')
 # -
@@ -28,8 +28,8 @@ tf.keras.backend.set_floatx('float64')
 
 from environment import MarketEnv
 
-train = pd.read_csv("../etl/train_dataset_after_pca_5fd37b6.csv")
-eval_df = pd.read_csv("../etl/val_dataset_after_pca_5fd37b6.csv")
+train = pd.read_csv("../etl/train_dataset.csv")
+eval_df = pd.read_csv("../etl/val_dataset.csv")
 
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
@@ -38,10 +38,10 @@ negative_reward_multiplicator = 100
 
 train_py_env = MarketEnv(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0"],
+    features = [c for c in train.columns.values if "feature" in c],
     reward_column = "resp",
     weight_column = "weight",
-    include_weight = False,
+    include_weight = True,
     discount=0.9,
     reward_multiplicator = reward_multiplicator,
     negative_reward_multiplicator = negative_reward_multiplicator
@@ -49,10 +49,10 @@ train_py_env = MarketEnv(
 
 val_py_env = MarketEnv(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0"],
+    features = [c for c in train.columns.values if "feature" in c],
     reward_column = "resp",
     weight_column = "weight",
-    include_weight = False,
+    include_weight = True,
     discount=0.9,
     reward_multiplicator = reward_multiplicator,
     negative_reward_multiplicator = negative_reward_multiplicator
@@ -67,7 +67,7 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### General hyperparams
 
 # +
-avg_reward_step_size = 1e-2
+avg_reward_step_size = 1e-1
 actor_step_size = 1e-6
 critic_step_size = 1e-6
 number_of_episodes = 2
@@ -81,18 +81,18 @@ tau = 1
 # +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    128,
-    64,
+    tf_env.time_step_spec().observation.shape[0],
+    tf_env.time_step_spec().observation.shape[0],
     2
 )
 
-actor_dropout = 0.1
-critic_dropout = 0.1
+actor_dropout = 0.001
+critic_dropout = 0.001
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    128,
-    64,
+    tf_env.time_step_spec().observation.shape[0],
+    tf_env.time_step_spec().observation.shape[0],
     1
 )
 
@@ -106,7 +106,7 @@ def create_actor_model():
         ),
         layers.Dense(
             actor_nn_arch[2],
-            activation="relu",
+            activation="swish",
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/actor_nn_arch[1], seed=1),
             name="actor_layer_dense_1"
@@ -132,7 +132,7 @@ def create_critic_model():
         layers.LSTM(critic_nn_arch[1], input_shape=(1, critic_nn_arch[0])),
         layers.Dense(
             actor_nn_arch[2],
-            activation="relu",
+            activation="swish",
             kernel_initializer=tf.keras.initializers.RandomNormal(
                 mean=0.0, stddev=1/critic_nn_arch[1], seed=1)
         ),
@@ -160,7 +160,7 @@ create_critic_model().summary()
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
     with tf.device("/cpu:0"):
-        to_predict = df[["f_{i}".format(i=i) for i in range(40)] + ["feature_0"]].values
+        to_predict = df[[c for c in df.columns.values if "feature" in c]].values
         
         actions = np.argmax(model(to_predict.reshape((to_predict.shape[0], 1, to_predict.shape[1]))).numpy(), axis=1)
         assert not np.isnan(np.sum(actions))
@@ -177,12 +177,11 @@ def calculate_u_metric(df, model, boundary=0.0):
     #     df["action"] = probs_df["action"]
         df["action"] = pd.Series(data=actions, index=df.index)
         df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
-        df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
 
-        tmp = df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+        tmp = df.groupby(["date"])[["trade_reward"]].agg("sum")
 
         sum_of_pi = tmp["trade_reward"].sum()
-        sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
+        sum_of_pi_x_pi = (tmp["trade_reward"]*tmp["trade_reward"]).sum()
 
         print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
 
@@ -345,11 +344,12 @@ def run_experiment():
         mlflow.log_param("critic_dropout", critic_dropout)
         mlflow.log_param("actor_dropout", actor_dropout)
         mlflow.log_param("tau", tau)
-        mlflow.log_param("included_weight", false)
+        mlflow.log_param("included_weight", False)
     
         t = time.localtime()
         current_time = time.strftime("%H:%M:%S", t)
         print(current_time)
+        best_u_metric = 0
         for epoch in range(number_of_episodes):
             time_step = tf_env.reset()
             action = agent.init(time_step)
@@ -365,6 +365,12 @@ def run_experiment():
                     print(epoch, counter, current_time)
                     t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
                     t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
+                    
+                    if u_eval > best_u_metric:
+                        best_u_metric = u_eval
+                        agent.actor_model.save("./actor_model")
+                        
+                    
                     mlflow.log_metrics({
                         "t_eval": t_eval,
                         "u_eval": u_eval,
@@ -373,7 +379,7 @@ def run_experiment():
                         "ratio_of_ones_eval": ratio_of_ones_eval,
                         "ratio_of_ones_train": ratio_of_ones_train
                     })
-        agent.actor_model.save("./actor_model")         
+                 
         subprocess.run(["zip", "-r", "model.zip", "actor_model"])
         mlflow.log_artifact("model.zip")
 

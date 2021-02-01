@@ -1,8 +1,8 @@
 import pandas as pd
+from pandas.testing import assert_frame_equal
 
 class ETL_1():
     def __init__(self, **kwargs):
-        self.past_row = kwargs.get("initial_row")
         self.columns_to_transform = kwargs.get("columns_to_transform")
         self.mean = kwargs.get("mean")
         self.stddev = kwargs.get("stddev")
@@ -10,8 +10,7 @@ class ETL_1():
     def fillna(self, row):
         missing_value_columns = row.loc[row.isnull()].index
         if len(missing_value_columns):
-            row[missing_value_columns] = self.past_row[missing_value_columns]
-        self.past_row = row.copy()
+            row[missing_value_columns] = self.mean[missing_value_columns]
         return row
     
     def normalise(self, row):
@@ -24,6 +23,35 @@ class ETL_1():
         self.fillna(row)
         self.normalise(row)
         return row
+
+# +
+inpt_df = pd.DataFrame(data=[
+    [1, 10, 100, None],
+    [2, 20, 200, 45],
+    [3, 30, 600, 55]
+], columns=["f_0", "f_1", "f_2", "f_3"])
+
+expected = pd.DataFrame(data=[
+    [1 , -1, -0.75592895, 50],
+    [2, 0, -0.37796447, 45],
+    [3, 1,  1.13389342, 55]
+], columns=["f_0", "f_1", "f_2", "f_3"])
+
+inpt_mean = inpt_df.mean()
+inpt_stddev = inpt_df.std()
+
+etl_1 = ETL_1(
+    initial_row=inpt_mean,
+    mean = inpt_mean,
+    stddev=inpt_stddev,
+    columns_to_transform=["f_1", "f_2"]
+)
+
+actual = inpt_df.apply(etl_1.fillna_normalize, axis=1)
+
+assert_frame_equal(actual, expected, check_dtype=False)
+# -
+
 
 
 class ETL_2():
