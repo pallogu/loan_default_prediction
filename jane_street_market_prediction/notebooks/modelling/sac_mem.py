@@ -30,39 +30,40 @@ tf.keras.backend.set_floatx('float64')
 
 from environment import MarketEnv
 
-train = pd.read_csv("../etl/train_dataset_after_pca_5fd37b6.csv")
-eval_df = pd.read_csv("../etl/val_dataset_after_pca_5fd37b6.csv")
+train = pd.read_csv("../etl/train_dataset_after_pca.csv")
+eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
 train.head()
 
-# +
-# eval_df = eval_df[eval_df["date"] < 420]
 reward_multiplicator = 100
 negative_reward_multiplicator = 103.9
 
+# +
 train_py_env = MarketEnv(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0"],
+    features = [c for c in train.columns if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
     discount=0.9,
-    include_weight=False,
-    reward_multiplicator = reward_multiplicator,
-    negative_reward_multiplicator = negative_reward_multiplicator
-)
-
-val_py_env = MarketEnv(
-    trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0"],
-    reward_column = "resp",
-    weight_column = "weight",
-    include_weight=False,
-    discount=0.9,
+    include_weight=True,
     reward_multiplicator = reward_multiplicator,
     negative_reward_multiplicator = negative_reward_multiplicator
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
+
+# +
+val_py_env = MarketEnv(
+    trades = eval_df,
+    features = [c for c in train.columns if "f_" in c] + ["feature_0", "weight"],
+    reward_column = "resp",
+    weight_column = "weight",
+    include_weight=True,
+    discount=0.9,
+    reward_multiplicator = reward_multiplicator,
+    negative_reward_multiplicator = negative_reward_multiplicator
+)
+
 eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # -
 
@@ -71,9 +72,9 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### General hyperparams
 
 # +
-avg_reward_step_size = 1e-2
-actor_step_size = 1e-5
-critic_step_size = 1e-4
+avg_reward_step_size = 0.95
+actor_step_size = 1e-6
+critic_step_size = 1e-6
 number_of_episodes = 4
 leaky_relu_alpha = 0.01
 
@@ -204,7 +205,7 @@ create_critic_model().summary()
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
     with tf.device("/cpu:0"):
-        actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["feature_0"]].values).numpy(), axis=1)
+        actions = np.argmax(model(df[[c for c in train.columns if "f_" in c] + ["feature_0", "weight"]].values).numpy(), axis=1)
         assert not np.isnan(np.sum(actions))
 
         sum_of_actions = np.sum(actions)
@@ -213,12 +214,11 @@ def calculate_u_metric(df, model, boundary=0.0):
     #     df["action"] = probs_df["action"]
         df["action"] = pd.Series(data=actions, index=df.index)
         df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
-        df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
 
-        tmp = df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
+        tmp = df.groupby(["date"])[["trade_reward"]].agg("sum")
 
         sum_of_pi = tmp["trade_reward"].sum()
-        sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
+        sum_of_pi_x_pi = (tmp["trade_reward"]*tmp["trade_reward"]).sum()
 
         print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
 
