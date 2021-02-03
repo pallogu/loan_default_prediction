@@ -124,6 +124,10 @@ encoded = encoder.predict(val_active)
 
 encoded.shape
 
+train_active.shape
+
+encoder.save("./encoder_35")
+
 encoder = tf.keras.models.load_model("./encoder_35")
 
 

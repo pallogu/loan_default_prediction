@@ -461,17 +461,17 @@ print(agent_test.actor_model.trainable_variables)
 # +
 # %%time
 
-agent = ACAgent(
-    actor_model=create_actor_model(),
-    critic_model=create_critic_model(),
-    avg_reward_step_size=avg_reward_step_size,
-    actor_step_size=actor_step_size,
-    critic_step_size=critic_step_size,
-    tau = tau
-)
+# agent = ACAgent(
+#     actor_model=create_actor_model(),
+#     critic_model=create_critic_model(),
+#     avg_reward_step_size=avg_reward_step_size,
+#     actor_step_size=actor_step_size,
+#     critic_step_size=critic_step_size,
+#     tau = tau
+# )
 
-agent.train = tf.function(agent.train)
-agent.init = tf.function(agent.init)
+# agent.train = tf.function(agent.train)
+# agent.init = tf.function(agent.init)
 
 def run_experiment():
     with mlflow.start_run():
