@@ -1,3 +1,6 @@
+# %load_ext autoreload
+# %autoreload 2
+
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -18,44 +21,40 @@ if len(gpus):
     tf.config.experimental.set_memory_growth(gpus[0], True)
 
 # +
-seed(500)
-set_seed(500)
+# seed(500)
+# set_seed(500)
 
 tf.keras.backend.set_floatx('float64')
+
 # -
 
 # ## Environments
 
-from environment import MarketEnv
+from environment import MarketEnvSimplified
 
-train = pd.read_csv("../etl/train_dataset.csv")
-eval_df = pd.read_csv("../etl/val_dataset.csv")
+train = pd.read_csv("../etl/train_dataset_after_pca.csv")
+eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
+
+train = train[train["weight"] != 0]
+eval_df = eval_df[eval_df["weight"] != 0]
 
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
-reward_multiplicator = 100
-negative_reward_multiplicator = 100
 
-train_py_env = MarketEnv(
+features= [c for c in train.columns.values if "f_" in c]
+
+train_py_env = MarketEnvSimplified(
     trades = train,
-    features = [c for c in train.columns.values if "feature" in c],
+    features = features,
     reward_column = "resp",
-    weight_column = "weight",
-    include_weight = True,
-    discount=0.9,
-    reward_multiplicator = reward_multiplicator,
-    negative_reward_multiplicator = negative_reward_multiplicator
+    discount=0.9
 )
 
-val_py_env = MarketEnv(
+val_py_env = MarketEnvSimplified(
     trades = eval_df,
-    features = [c for c in train.columns.values if "feature" in c],
+    features = features,
     reward_column = "resp",
-    weight_column = "weight",
-    include_weight = True,
-    discount=0.9,
-    reward_multiplicator = reward_multiplicator,
-    negative_reward_multiplicator = negative_reward_multiplicator
+    discount=0.9
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
@@ -67,10 +66,10 @@ eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### General hyperparams
 
 # +
-avg_reward_step_size = 1e-1
+avg_reward_step_size = 0.99
 actor_step_size = 1e-6
 critic_step_size = 1e-6
-number_of_episodes = 2
+number_of_episodes = 4
 
 tau = 1
 
@@ -81,8 +80,8 @@ tau = 1
 # +
 actor_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    tf_env.time_step_spec().observation.shape[0],
-    tf_env.time_step_spec().observation.shape[0],
+    tf_env.time_step_spec().observation.shape[0]*2,
+    tf_env.time_step_spec().observation.shape[0]*2,
     2
 )
 
@@ -91,7 +90,7 @@ critic_dropout = 0.001
 
 critic_nn_arch = (
     tf_env.time_step_spec().observation.shape[0],
-    tf_env.time_step_spec().observation.shape[0],
+    tf_env.time_step_spec().observation.shape[0]*2,
     tf_env.time_step_spec().observation.shape[0],
     1
 )
@@ -160,7 +159,7 @@ create_critic_model().summary()
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
     with tf.device("/cpu:0"):
-        to_predict = df[[c for c in df.columns.values if "feature" in c]].values
+        to_predict = df[features].values
         
         actions = np.argmax(model(to_predict.reshape((to_predict.shape[0], 1, to_predict.shape[1]))).numpy(), axis=1)
         assert not np.isnan(np.sum(actions))
@@ -320,17 +319,17 @@ class ACAgent():
 # +
 # %%time
 
-agent = ACAgent(
-    actor_model=create_actor_model(),
-    critic_model=create_critic_model(),
-    avg_reward_step_size=avg_reward_step_size,
-    actor_step_size=actor_step_size,
-    critic_step_size=critic_step_size,
-    tau = tau
-)
+# agent = ACAgent(
+#     actor_model=create_actor_model(),
+#     critic_model=create_critic_model(),
+#     avg_reward_step_size=avg_reward_step_size,
+#     actor_step_size=actor_step_size,
+#     critic_step_size=critic_step_size,
+#     tau = tau
+# )
 
-agent.train = tf.function(agent.train)
-agent.init = tf.function(agent.init)
+# agent.train = tf.function(agent.train)
+# agent.init = tf.function(agent.init)
 
 def run_experiment():
     with mlflow.start_run():
