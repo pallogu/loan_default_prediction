@@ -41,11 +41,11 @@ reward_multiplicator = 100
 negative_reward_multiplicator = 103.9
 
 # +
-discount = 0.1
+discount = 0.01
 
 train_py_env = MarketEnv(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0", "weight"],
+    features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
     include_weight=True,
@@ -56,7 +56,7 @@ train_py_env = MarketEnv(
 
 val_py_env = MarketEnv(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0", "weight"],
+    features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
     include_weight=True,
@@ -72,15 +72,15 @@ val_env = tf_py_environment.TFPyEnvironment(val_py_env)
 # ### Hyperparameters
 
 # +
-num_iterations = train.shape[0]
+num_iterations = train.shape[0]*4
 
 initial_collect_steps = 100
 collect_steps_per_iteration = 1
 replay_buffer_max_length = num_iterations*2
 
-batch_size = 128
+batch_size = 256
 learning_rate = 1e-6
-log_interval = np.floor(num_iterations / 1000)
+log_interval = np.floor(num_iterations / 100)
 
 num_eval_episodes = 10
 eval_interval = np.floor(num_iterations / 50)
@@ -88,13 +88,23 @@ eval_interval = np.floor(num_iterations / 50)
 
 # ### Agent
 
+number_features = len([c for c in train.columns.values if "f_" in c]) +2
+
+number_features
+
 # +
-fc_layer_params = (64, 128, 128, 64,)
+
+fc_layer_params = (number_features , number_features*3, number_features*3, number_features,)
 
 q_net = q_network.QNetwork(
     train_env.observation_spec(),
     train_env.action_spec(),
     fc_layer_params=fc_layer_params)
+# -
+
+q_net.create_variables()
+
+q_net.summary()
 
 # +
 optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
