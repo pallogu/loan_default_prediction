@@ -19,8 +19,12 @@ from ETLc import ETL_1, ETL_2
 
 train = pd.read_csv("../../input/train.csv")
 
-valuation_data = train[train["date"] >=400]
-train = train[train["date"] < 400]
+valuation_data = train[train["date"] >=419]
+train = train[(train["date"] < 419) & (train["date"] > 85)]
+
+valuation_data.shape
+
+
 
 test = valuation_data.copy()
 test.drop(columns=["resp", "resp_1", "resp_2", "resp_3", "resp_4"], inplace=True)
@@ -53,12 +57,14 @@ with open("./etl_1.pkl", "rb") as f:
 # %%time
 train_trans_1  = train.swifter.apply(etl_1.fillna_normalize, axis=1)
 
-pca = PCA(n_components=40)
+pca = PCA(n_components=0.99)
 pca.fit(train_trans_1[feats].values)
+
+n_components = pca.n_components_
 
 etl_2 = ETL_2(
     columns_to_transform=feats,
-    trans_cols_names= ["f_{i}".format(i=i) for i in range(40)],
+    trans_cols_names= ["f_{i}".format(i=i) for i in range(n_components)],
     columns_to_keep_train = ['date', 'weight', 'resp', "feature_0"],
     columns_to_keep = ["date", "weight", "feature_0"], 
     pca = pca
