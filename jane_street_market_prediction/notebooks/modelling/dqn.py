@@ -2,13 +2,8 @@
 from __future__ import absolute_import, division, print_function
 
 import base64
-import imageio
 import IPython
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
-import PIL.Image
-import pyvirtualdisplay
 
 import tensorflow as tf
 
@@ -42,27 +37,32 @@ from environment import MarketEnv
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
-eval_df = eval_df[eval_df["date"] < 420]
-
-eval_df.shape
+reward_multiplicator = 100
+negative_reward_multiplicator = 103.9
 
 # +
-discount = 0.75
+discount = 0.1
 
 train_py_env = MarketEnv(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=discount
+    include_weight=True,
+    discount=discount,
+    reward_multiplicator = reward_multiplicator,
+    negative_reward_multiplicator = negative_reward_multiplicator
 )
 
 val_py_env = MarketEnv(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = ["f_{i}".format(i=i) for i in range(40)] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=discount
+    include_weight=True,
+    discount=discount,
+    reward_multiplicator = reward_multiplicator,
+    negative_reward_multiplicator = negative_reward_multiplicator
 )
 # -
 
@@ -89,7 +89,7 @@ eval_interval = np.floor(num_iterations / 50)
 # ### Agent
 
 # +
-fc_layer_params = (32, 32,)
+fc_layer_params = (64, 128, 128, 64,)
 
 q_net = q_network.QNetwork(
     train_env.observation_spec(),
@@ -150,55 +150,40 @@ iterator = iter(dataset)
 
 # ### Metrics and Evaluation
 
-def calculate_u_metric(env, policy):
+def calculate_u_metric(df):
     print("evaluating policy")
-  
-    time_step = env.reset()
-    
-    actions = np.array([])
-    
-    counter = 0
-    t = time.localtime()
-    current_time = time.strftime("%H:%M:%S", t)
-    print("start_time", current_time)
-    
-    while not time_step.is_last():
-        action_step = agent.policy.action(time_step)
-        actions = np.concatenate((actions, action_step.action.numpy()))
-        
-        time_step = env.step(action_step.action)
-        
-        counter += 1
-        
-        if counter % 10000 ==0 :
-            print(counter)
-            t = time.localtime()
-            current_time = time.strftime("%H:%M:%S", t)
-            print("cycle_time", current_time)
-            
-    action_step = agent.policy.action(time_step)
-    actions = np.concatenate((actions, action_step.action.numpy()))
-            
-    eval_df["action"] = pd.Series(data=actions, index = eval_df.index)
-    eval_df["trade_reward"] = eval_df["action"]*eval_df["weight"]*eval_df["resp"]
-    eval_df["trade_reward_squared"] = eval_df["trade_reward"]*eval_df["trade_reward"]
+    with tf.device("/cpu:0"):
 
-    tmp = eval_df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
-        
-    sum_of_pi = tmp["trade_reward"].sum()
-    sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
-    
-    print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
-        
-    t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
-    print("t: {t}".format(t = t) )
-    
-    u  = np.min([np.max([t, 0]), 6]) * sum_of_pi
-    print("u: {u}".format(u = u) )
-    
-    print("finished evaluating policy")
-            
-    return t, u
+        actions = np.argmax(q_net(df[[c for c in df.columns if "f_" in c] + ["feature_0","weight"]].values)[0].numpy(), axis=1)
+        assert not np.isnan(np.sum(actions))
+
+        sum_of_actions = np.sum(actions)
+        print("np_sum(actions)", sum_of_actions)
+
+    #     df["action"] = probs_df["action"]
+        df["action"] = pd.Series(data=actions, index=df.index)
+
+        df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
+
+        tmp = df.groupby(["date"])[["trade_reward"]].agg("sum")
+
+        sum_of_pi = tmp["trade_reward"].sum()
+        sum_of_pi_x_pi = (tmp["trade_reward"]*tmp["trade_reward"]).sum()
+
+        print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
+
+        t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
+        print("t: {t}".format(t = t) )
+
+        u  = np.min([np.max([t, 0]), 6]) * sum_of_pi
+        print("u: {u}".format(u = u) )
+        ratio_of_ones = sum_of_actions/len(actions)
+        print("ration of ones", ratio_of_ones)
+        print("length of df", len(actions))
+
+        print("finished evaluating policy")
+
+        return t, u, ratio_of_ones
 
 
 # ### Training the agent
@@ -214,13 +199,13 @@ def run_experiment():
         mlflow.log_param("learning_rate", learning_rate)
         mlflow.set_tag("data_set", "initial_dataset_after_pca")
         mlflow.log_param("discount", discount)
-        mlflow.log_param("run", 2)
+        mlflow.log_param("run", 1)
         
         agent.train = common.function(agent.train)
         
         agent.train_step_counter.assign(0)
         
-        
+        best_score = 0
         for _ in range(num_iterations):
             collect_data(train_env, agent.collect_policy, replay_buffer, collect_steps_per_iteration)
             
@@ -235,19 +220,33 @@ def run_experiment():
                 mlflow.log_metric("loss", train_loss.numpy())
                 
             if _ % eval_interval == 0:
-                t, u = calculate_u_metric(val_env, agent.policy)
-                mlflow.log_metric("u_metric", u)
-                mlflow.log_metric("t_metric", t)
-                mlflow.log_metric("step", step)
+                t = time.localtime()
+                current_time = time.strftime("%H:%M:%S", t)
+                print("\n")
+                print(_, current_time)
+                t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df)
+                print("\n")
+                t_train, u_train, ratio_of_ones_train = calculate_u_metric(train)
+
+                mlflow.log_metrics({
+                    "t_eval": t_eval,
+                    "u_eval": u_eval,
+                    "t_train": t_train,
+                    "u_train": u_train,
+                    "ratio_of_ones_eval": ratio_of_ones_eval,
+                    "ratio_of_ones_train": ratio_of_ones_train
+                })
+                if u_eval > best_score:
+                    best_score=u_eval
+                    saver = PolicySaver(agent.policy, batch_size=None)
+                    saver.save("dqn_policy")
+                    
+        subprocess.run(["zip", "-r", "dqn_policy.zip", "dqn_policy"])
+        mlflow.log_artifact("dqn_policy.zip")
+
 
 # %%time
 run_experiment()
-
-saver = PolicySaver(agent.policy, batch_size=None)
-
-saver.save("model_dqn_32_32_075_short_2.policy")
-
-
 
 calculate_u_metric(val_env, agent.policy)
 
