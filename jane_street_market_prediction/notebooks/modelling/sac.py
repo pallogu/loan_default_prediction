@@ -1,17 +1,43 @@
-import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
-from numpy.random import seed
-from tensorflow.random import set_seed
-import pandas as pd
+# %load_ext autoreload
+# %autoreload 2
+
+# +
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import functools
+import os
+import time
+
+
+from six.moves import range
+import tensorflow as tf  # pylint: disable=g-explicit-tensorflow-version-import
+
+from tf_agents.agents.ddpg import critic_rnn_network
+from tf_agents.agents.sac import sac_agent
+from tf_agents.agents.sac import tanh_normal_projection_network
+from tf_agents.drivers import dynamic_episode_driver
+from tf_agents.environments import parallel_py_environment
+from tf_agents.environments import suite_dm_control
 from tf_agents.environments import tf_py_environment
-from tf_agents.trajectories.time_step import TimeStep
+from tf_agents.environments import wrappers
+from tf_agents.eval import metric_utils
+from tf_agents.metrics import tf_metrics
+from tf_agents.networks import actor_distribution_rnn_network
+from tf_agents.policies import greedy_policy
+from tf_agents.policies import random_tf_policy
+from tf_agents.replay_buffers import tf_uniform_replay_buffer
+from tf_agents.utils import common
+
+import pandas as pd
+
 import time
 import mlflow
 import logging
 import subprocess
 import tensorflow_probability as tfp
+# -
 
 
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -20,174 +46,254 @@ if len(gpus):
 
 
 # +
-seed(42)
-set_seed(42)
-
-tf.keras.backend.set_floatx('float64')
+# tf.keras.backend.set_floatx('float64')
 # -
 
 # ## Environments
 
-from environment import MarketEnv
+from environment import MarketEnvContinuous
 
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
 # +
 # eval_df = eval_df[eval_df["date"] < 420]
-reward_multiplicator = 1000
-negative_reward_multiplicator = 1039.1
+reward_multiplicator = 100
+negative_reward_multiplicator = 103.91
+discount = 0.1
 
-train_py_env = MarketEnv(
+train_py_env = MarketEnvContinuous(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=0.9,
+    discount=discount,
     reward_multiplicator = reward_multiplicator,
     negative_reward_multiplicator = negative_reward_multiplicator
 )
 
-val_py_env = MarketEnv(
+val_py_env = MarketEnvContinuous(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=0.9,
+    discount=discount,
     reward_multiplicator = 1,
     negative_reward_multiplicator = 1
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
 eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
+
+
 # -
 
 # ## Hyperparameters
 
 # ### General hyperparams
 
-# +
-avg_reward_step_size = 1e-2
-actor_step_size = 1e-6
-critic_step_size = 1e-5
-number_of_episodes = 3
+def train():
+    num_iterations=1000000
+    # Params for networks.
+    actor_fc_layers=(128, 64)
+    actor_output_fc_layers=(64,)
+    actor_lstm_size=(32,)
+    critic_obs_fc_layers=None
+    critic_action_fc_layers=None
+    critic_joint_fc_layers=(128,)
+    critic_output_fc_layers=(64,)
+    critic_lstm_size=(32,)
+    num_parallel_environments=1
+    # Params for collect
+    initial_collect_episodes=1
+    collect_episodes_per_iteration=1
+    replay_buffer_capacity=1000000
+    # Params for target update
+    target_update_tau=0.05
+    target_update_period=5
+    # Params for train
+    train_steps_per_iteration=1
+    batch_size=256
+    critic_learning_rate=3e-4
+    train_sequence_length=20
+    actor_learning_rate=3e-4
+    alpha_learning_rate=3e-4
+    td_errors_loss_fn=tf.math.squared_difference
+    gamma=0.99
+    reward_scale_factor=0.1
+    gradient_clipping=None
+    use_tf_functions=True
+    # Params for eval
+    num_eval_episodes=30
+    eval_interval=10000
+    # Params for summaries and logging
+    train_checkpoint_interval=10000
+    policy_checkpoint_interval=5000
+    rb_checkpoint_interval=50000
+    log_interval=1000
+    summary_interval=1000
+    summaries_flush_secs=10
+    debug_summaries=False
+    summarize_grads_and_vars=False
+    eval_metrics_callback=None
+    root_dir = "./"
+    
+    eval_metrics = [
+      tf_metrics.AverageReturnMetric(buffer_size=num_eval_episodes),
+      tf_metrics.AverageEpisodeLengthMetric(buffer_size=num_eval_episodes)
+    ]
 
-tau = 1
+    global_step = tf.compat.v1.train.get_or_create_global_step()
+    
+    time_step_spec = tf_env.time_step_spec()
+    observation_spec = time_step_spec.observation
+    action_spec = tf_env.action_spec()
+    
+    actor_net = actor_distribution_rnn_network.ActorDistributionRnnNetwork(
+        observation_spec,
+        action_spec,
+        input_fc_layer_params=actor_fc_layers,
+        lstm_size=actor_lstm_size,
+        output_fc_layer_params=actor_output_fc_layers,
+        continuous_projection_net=tanh_normal_projection_network
+        .TanhNormalProjectionNetwork)
 
-# -
+    critic_net = critic_rnn_network.CriticRnnNetwork(
+        (observation_spec, action_spec),
+        observation_fc_layer_params=critic_obs_fc_layers,
+        action_fc_layer_params=critic_action_fc_layers,
+        joint_fc_layer_params=critic_joint_fc_layers,
+        lstm_size=critic_lstm_size,
+        output_fc_layer_params=critic_output_fc_layers,
+        kernel_initializer='glorot_uniform',
+        last_kernel_initializer='glorot_uniform')
+    
+    tf_agent = sac_agent.SacAgent(
+        time_step_spec,
+        action_spec,
+        actor_network=actor_net,
+        critic_network=critic_net,
+        actor_optimizer=tf.compat.v1.train.AdamOptimizer(
+            learning_rate=actor_learning_rate),
+        critic_optimizer=tf.compat.v1.train.AdamOptimizer(
+            learning_rate=critic_learning_rate),
+        alpha_optimizer=tf.compat.v1.train.AdamOptimizer(
+            learning_rate=alpha_learning_rate),
+        target_update_tau=target_update_tau,
+        target_update_period=target_update_period,
+        td_errors_loss_fn=td_errors_loss_fn,
+        gamma=gamma,
+        reward_scale_factor=reward_scale_factor,
+        gradient_clipping=gradient_clipping,
+        debug_summaries=debug_summaries,
+        summarize_grads_and_vars=summarize_grads_and_vars,
+        train_step_counter=global_step)
+    tf_agent.initialize()
+    
+    replay_buffer = tf_uniform_replay_buffer.TFUniformReplayBuffer(
+        data_spec=tf_agent.collect_data_spec,
+        batch_size=tf_env.batch_size,
+        max_length=replay_buffer_capacity)
+    replay_observer = [replay_buffer.add_batch]
+    
+    env_steps = tf_metrics.EnvironmentSteps(prefix='Train')
+    average_return = tf_metrics.AverageReturnMetric(
+        prefix='Train',
+        buffer_size=num_eval_episodes,
+        batch_size=tf_env.batch_size)
+    train_metrics = [
+        tf_metrics.NumberOfEpisodes(prefix='Train'),
+        env_steps,
+        average_return,
+        tf_metrics.AverageEpisodeLengthMetric(
+            prefix='Train',
+            buffer_size=num_eval_episodes,
+            batch_size=tf_env.batch_size),
+    ]
+    
+    eval_policy = greedy_policy.GreedyPolicy(tf_agent.policy)
+    initial_collect_policy = random_tf_policy.RandomTFPolicy(
+        tf_env.time_step_spec(), tf_env.action_spec())
+    collect_policy = tf_agent.collect_policy
+    
+    train_checkpointer = common.Checkpointer(
+        ckpt_dir=os.path.join(root_dir, 'train'),
+        agent=tf_agent,
+        global_step=global_step,
+        metrics=metric_utils.MetricsGroup(train_metrics, 'train_metrics'))
+    policy_checkpointer = common.Checkpointer(
+        ckpt_dir=os.path.join(root_dir, 'policy'),
+        policy=eval_policy,
+        global_step=global_step)
+    rb_checkpointer = common.Checkpointer(
+        ckpt_dir=os.path.join(root_dir, 'replay_buffer'),
+        max_to_keep=1,
+        replay_buffer=replay_buffer)
+    
+    initial_collect_driver = dynamic_episode_driver.DynamicEpisodeDriver(
+        tf_env,
+        initial_collect_policy,
+        observers=replay_observer + train_metrics,
+        num_episodes=initial_collect_episodes)
 
-# ### Defining Architecture of actor and critic
+    collect_driver = dynamic_episode_driver.DynamicEpisodeDriver(
+        tf_env,
+        collect_policy,
+        observers=replay_observer + train_metrics,
+        num_episodes=collect_episodes_per_iteration)
 
-# +
-actor_nn_arch = (
-    tf_env.time_step_spec().observation.shape[0],
-    256,
-    256,
-    128,
-    64,
-    2
-)
+    if use_tf_functions:
+        initial_collect_driver.run = common.function(initial_collect_driver.run)
+        collect_driver.run = common.function(collect_driver.run)
+        tf_agent.train = common.function(tf_agent.train)
+        
+    if env_steps.result() == 0 or replay_buffer.num_frames() == 0:
+        logging.info(
+          'Initializing replay buffer by collecting experience for %d episodes '
+          'with a random policy.', initial_collect_episodes)
+        initial_collect_driver.run()
 
-actor_dropout = 0.2
-critic_dropout = 0.3
+    results = metric_utils.eager_compute(
+        eval_metrics,
+        eval_tf_env,
+        eval_policy,
+        num_episodes=num_eval_episodes,
+        train_step=env_steps.result(),
+        summary_writer=summary_writer,
+        summary_prefix='Eval',
+    )
+    if eval_metrics_callback is not None:
+        eval_metrics_callback(results, env_steps.result())
+    metric_utils.log_metrics(eval_metrics)
 
-critic_nn_arch = (
-    tf_env.time_step_spec().observation.shape[0],
-    256,
-    256,
-    128,
-    64,
-    1
-)
-
-
-def create_actor_model():
-    actor_model = keras.Sequential([
-        layers.Input(shape=actor_nn_arch[0]),
-        layers.Dense(
-            actor_nn_arch[1],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/actor_nn_arch[0], seed=1)
-        ),
-        layers.Dropout(actor_dropout),
-        layers.Dense(
-            actor_nn_arch[2],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/actor_nn_arch[1], seed=2)
-        ),
-        layers.Dropout(actor_dropout),
-        layers.Dense(
-            actor_nn_arch[3],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/actor_nn_arch[2], seed=3
-            )
-        ),
-        layers.Dropout(actor_dropout),
-        layers.Dense(
-            actor_nn_arch[4],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/actor_nn_arch[3], seed=3
-            )
-        ),
-        layers.Dropout(actor_dropout),
-        layers.Dense(
-            actor_nn_arch[5],
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/actor_nn_arch[4], seed=4)
-        )
-    ])
-
-    return actor_model
+    time_step = None
+    policy_state = collect_policy.get_initial_state(tf_env.batch_size)
 
 
-def create_critic_model():
-    critic_model = keras.Sequential([
-        layers.Input(shape=critic_nn_arch[0]),
-        layers.Dense(
-            critic_nn_arch[1],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/critic_nn_arch[0], seed=11)
-        ),
-        layers.Dropout(critic_dropout),
-        layers.Dense(
-            critic_nn_arch[2],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/critic_nn_arch[1], seed=12)
-        ),
-        layers.Dropout(critic_dropout),
-        layers.Dense(
-            critic_nn_arch[3],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/critic_nn_arch[2], seed=13)
-        ),
-        layers.Dropout(critic_dropout),
-        layers.Dense(
-            critic_nn_arch[4],
-            activation="relu",
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/critic_nn_arch[3], seed=13)
-        ),
-        layers.Dropout(critic_dropout),
-        layers.Dense(
-            critic_nn_arch[5],
-            kernel_initializer=tf.keras.initializers.RandomNormal(
-                mean=0.0, stddev=1/critic_nn_arch[4], seed=14)
-        )
-    ])
-
-    return critic_model
+with tf.device("/cpu:0"):
+    train()
 
 
-# -
 
-# ## Definition of metrics
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def calculate_u_metric(df, model, boundary=0.0):
     print("evaluating policy")
@@ -229,308 +335,6 @@ def calculate_u_metric(df, model, boundary=0.0):
         
         return t, u, ratio_of_ones
 
-
-# ## AC Agent
-
-# +
-class ACAgent():
-    def __init__(self, **kwargs):
-        self.actor_model = kwargs.get("actor_model")
-        self.critic_model = kwargs.get("critic_model")
-        self.avg_reward_step_size = tf.constant(
-            kwargs.get("avg_reward_step_size"), dtype=np.float64)
-        self.avg_reward_step_size_remainer = tf.constant(
-            1 - kwargs.get("avg_reward_step_size"), dtype=np.float64)
-
-        actor_step_size = kwargs.get("actor_step_size")
-        critic_step_size = kwargs.get("critic_step_size")
-        self.tau = tf.constant(kwargs.get("tau", 1), dtype=np.float64)
-        self.observation_spec = kwargs.get("observation_spec", tf_env.time_step_spec().observation)
-
-        self.actor_optimizer = keras.optimizers.Adam(
-            learning_rate=actor_step_size)
-        self.critic_optimizer = keras.optimizers.Adam(
-            learning_rate=critic_step_size)
-
-        self.reward = tf.Variable(
-            0, dtype=np.float64, name="reward", trainable=False)
-        self.delta = tf.Variable(
-            0, dtype=np.float64, name="delta", trainable=False)
-        self.prev_observation = tf.Variable(tf.zeros_initializer()(
-                                            shape=(1, self.observation_spec.shape[0]),
-                                            dtype=self.observation_spec.dtype,
-
-                                            ), name=self.observation_spec.name,
-                                            trainable=False)
-        self.prev_action = tf.Variable(
-            0, dtype=np.int32, name="prev_action", trainable=False)
-
-    def init(self, time_step):
-        observation = time_step.observation
-
-        probs = self.policy(observation)[0]
-
-        action = tfp.distributions.Bernoulli(
-            probs=probs[1], dtype=tf.int32).sample()
-
-        self.prev_observation.assign(observation)
-        self.prev_action.assign(action)
-
-        return action
-
-    def policy(self, observation):
-        return tf.nn.softmax(self.actor_model(observation)/self.tau)
-
-    def train(self, time_step):
-        observation = time_step.observation
-
-        observation_reward = tf.dtypes.cast(tf.reshape(
-            time_step.reward, shape=()), tf.float64)
-
-        # self.update_avg_reward(reward)
-        # inlined from the function
-        self.reward.assign(
-            self.avg_reward_step_size_remainer*self.reward +
-            self.avg_reward_step_size * observation_reward
-        )
-
-        ### self.update_td_error(reward, observation)
-        # inlined from the function
-        delta = (observation_reward
-                 - self.reward
-                 + self.critic_model(observation)[0][0]
-                 - self.critic_model(self.prev_observation)[0][0]
-                 )
-
-        self.delta.assign(delta)
-
-        # self.update_critic_model()
-        # inlined from the function
-        with tf.GradientTape() as tape:
-            grad = [-1*self.delta * g for g in tape.gradient(
-                self.critic_model(self.prev_observation),
-                self.critic_model.trainable_variables
-            )]
-
-            self.critic_optimizer.apply_gradients(
-                zip(grad, self.critic_model.trainable_variables),
-                experimental_aggregate_gradients=False
-            )
-
-        # self.update_actor_model()
-        # inlined from the function
-
-        prev_action = self.prev_action
-        with tf.GradientTape() as tape:
-
-            grad = [-1 * self.delta * g for g in tape.gradient(
-                tf.math.log(tf.nn.softmax(self.actor_model(
-                    self.prev_observation)/self.tau)[0][self.prev_action]),
-                self.actor_model.trainable_variables
-            )]
-
-            self.actor_optimizer.apply_gradients(
-                zip(grad, self.actor_model.trainable_variables),
-                experimental_aggregate_gradients=False
-            )
-
-        probs = self.policy(observation)[0]
-
-        action = tfp.distributions.Bernoulli(
-            probs=probs[1], dtype=tf.int32).sample()
-
-        self.prev_action.assign(action)
-        self.prev_observation.assign(observation)
-
-        return action
-
-#     def update_avg_reward(self, observation_reward):
-#         self.reward.assign(
-#             self.avg_reward_step_size_remainer*self.reward +
-#             self.avg_reward_step_size * observation_reward
-#         )
-
-#         if self.debug:
-#             assert not np.isnan(self.reward.numpy())
-
-#     def update_td_error(self, observation_reward, observation):
-#         delta = (observation_reward
-#                  - self.reward
-
-#                  - self.critic_model(self.prev_observation)[0][0]
-#                  )
-
-#         if self.verbose:
-#             print("DELTA: ------------------", delta)
-
-#         self.delta.assign(delta)
-
-#         if self.debug:
-#             assert not np.isnan(self.delta.numpy())
-
-#     def update_critic_model(self):
-#         with tf.GradientTape() as tape:
-#             grad = [-1*self.delta * g for g in tape.gradient(
-#                 self.critic_model(self.prev_observation),
-#                 self.critic_model.trainable_variables
-#             )]
-
-#             if self.debug:
-#                 for tensor in grad:
-#                     tf.debugging.assert_all_finite(
-#                         tensor, "critic gradient contains non finite number")
-
-#             self.critic_optimizer.apply_gradients(
-#                 zip(grad, self.critic_model.trainable_variables),
-#                 experimental_aggregate_gradients=False
-#             )
-
-#             if self.debug:
-#                 for tensor in self.critic_model.trainable_variables:
-#                     tf.debugging.assert_all_finite(
-#                         tensor, "critic contains non finite number")
-
-#     def update_actor_model(self):
-#         prev_action = self.prev_action
-#         with tf.GradientTape() as tape:
-
-#             grad = [-1 * self.delta * g for g in tape.gradient(
-#                 tf.math.log(tf.nn.softmax(self.actor_model(
-#                     self.prev_observation)/self.tau)[0][self.prev_action]),
-#                 self.actor_model.trainable_variables
-#             )]
-
-# #             last_layer_w = grad[-2].numpy()
-# #             last_layer_w[:, prev_action] = 0
-# #             grad[-2] = tf.constant(last_layer_w, dtype=np.float64)
-
-# #             last_layer_b = grad[-1].numpy()
-# #             last_layer_b[prev_action] = 0
-# #             grad[-1] = tf.constant(last_layer_b, dtype=np.float64)
-
-#             if self.debug:
-#                 for tensor in grad:
-#                     tf.debugging.assert_all_finite(
-#                         tensor, "actor gradient contains non finite number")
-
-#             self.actor_optimizer.apply_gradients(
-#                 zip(grad, self.actor_model.trainable_variables),
-#                 experimental_aggregate_gradients=False
-#             )
-
-#             if self.debug:
-#                 for tensor in self.actor_model.trainable_variables:
-#                     tf.debugging.assert_all_finite(
-#                         tensor, "actor model contains non finite number")
-# -
-# ### Agent Test
-
-
-# +
-# Test Cell
-
-np.random.seed(42)
-
-
-actor_model_test = keras.Sequential([
-    layers.Input(shape=4),
-    layers.Dense(
-        4,
-        activation="relu",
-        kernel_initializer=tf.keras.initializers.Constant(value=1)
-    ),
-    layers.Dense(
-        2,
-        activation="softmax",
-        kernel_initializer=tf.keras.initializers.Constant(value=1)
-    )
-])
-
-
-critic_model_test = keras.Sequential([
-    layers.Input(shape=4),
-    layers.Dense(
-        4,
-        activation="relu",
-        kernel_initializer=tf.keras.initializers.Constant(value=1)
-    ),
-    layers.Dense(
-        1,
-        kernel_initializer=tf.keras.initializers.Constant(value=1)
-    )
-])
-
-agent_test = ACAgent(
-    actor_model=actor_model_test,
-    critic_model=critic_model_test,
-    avg_reward_step_size=0.1,
-    actor_step_size=0.1,
-    critic_step_size=0.1,
-    observation_spec = tf.TensorSpec(shape = (4,), dtype=tf.float64, name="observation")
-)
-# agent_test.init = tf.function(agent_test.init, autograph = False, experimental_relax_shapes = True)
-
-agent_test.train = tf.function(agent_test.train, autograph = False, experimental_relax_shapes = True)
-
-# agent_test.update_td_error = tf.function(agent_test.update_td_error)
-
-
-test_action = agent_test.init(TimeStep(
-    step_type=tf.constant([0], dtype=np.int32, name="step_type"),
-    reward=tf.constant([0.0], dtype=np.float32, name="reward"),
-    discount=tf.constant([1], dtype=np.float32, name="discount"),
-    observation=tf.constant(np.array([[1, 2, 1, 2]]), dtype=np.float64, name="observation")
-    )
-)
-print("after init")
-print(agent_test.actor_model.trainable_variables)
-
-# print("test_action: ________" , test_action)
-# assert test_action.numpy() == 0
-
-# agent_test.update_avg_reward(1)
-# assert agent_test.reward == 0.1
-# agent_test.update_avg_reward(1)
-# assert agent_test.reward == 0.19
-# agent_test.update_avg_reward(1)
-# assert agent_test.reward == 0.271
-
-# agent_test.update_td_error(1, tf.constant(
-#     np.array([[1, 1, 0, 0]]), dtype=np.float64))
-
-
-# print("delta: _______", agent_test.delta.numpy())
-# assert agent_test.delta.numpy() == -7.271000000000001
-
-test_action = agent_test.train(TimeStep(
-    step_type=tf.constant([0], dtype=np.int32, name="step_type"),
-    reward=tf.constant([5.0], dtype=np.float32, name="reward"),
-    discount=tf.constant([1], dtype=np.float32, name="discount"),
-    observation=tf.constant([[1, 2, 1, 2]], dtype=np.float64, name="observation"))
-)
-
-print("after Train")
-
-print(agent_test.actor_model.trainable_variables)
-
-test_action = agent_test.train(TimeStep(
-    step_type=tf.constant([0], dtype=np.int32, name="step_type"),
-    reward=tf.constant([3.0], dtype=np.float32, name="reward"),
-    discount=tf.constant([1], dtype=np.float32, name="discount"),
-    observation=tf.constant([[1, 2, 1, 2]], dtype=np.float64, name="observation"))
-)
-
-print("after Train")
-
-print(agent_test.actor_model.trainable_variables)
-
-
-# -
-
-
-# ## Running of the experiment
-
-# ### Running Full Experiment
 
 # +
 # %%time
