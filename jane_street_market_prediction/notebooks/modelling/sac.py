@@ -85,13 +85,6 @@ val_py_env = MarketEnvContinuous(
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)
 eval_tf_env = tf_py_environment.TFPyEnvironment(val_py_env)
 
-
-# -
-
-# ## Hyperparameters
-
-# ### General hyperparams
-
 def train():
     num_iterations=1000000
     # Params for networks.
@@ -126,22 +119,17 @@ def train():
     # Params for eval
     num_eval_episodes=30
     eval_interval=10000
-    # Params for summaries and logging
-    train_checkpoint_interval=10000
-    policy_checkpoint_interval=5000
-    rb_checkpoint_interval=50000
+
     log_interval=1000
-    summary_interval=1000
     summaries_flush_secs=10
     debug_summaries=False
     summarize_grads_and_vars=False
-    eval_metrics_callback=None
     root_dir = "./"
     
-    eval_metrics = [
-      tf_metrics.AverageReturnMetric(buffer_size=num_eval_episodes),
-      tf_metrics.AverageEpisodeLengthMetric(buffer_size=num_eval_episodes)
-    ]
+    summary_writer = tf.compat.v2.summary.create_file_writer(
+    root_dir, flush_millis=summaries_flush_secs * 1000)
+    summary_writer.set_as_default()
+
 
     global_step = tf.compat.v1.train.get_or_create_global_step()
     
@@ -201,45 +189,24 @@ def train():
         prefix='Train',
         buffer_size=num_eval_episodes,
         batch_size=tf_env.batch_size)
-    train_metrics = [
-        tf_metrics.NumberOfEpisodes(prefix='Train'),
-        env_steps,
-        average_return,
-        tf_metrics.AverageEpisodeLengthMetric(
-            prefix='Train',
-            buffer_size=num_eval_episodes,
-            batch_size=tf_env.batch_size),
-    ]
+
     
     eval_policy = greedy_policy.GreedyPolicy(tf_agent.policy)
     initial_collect_policy = random_tf_policy.RandomTFPolicy(
         tf_env.time_step_spec(), tf_env.action_spec())
     collect_policy = tf_agent.collect_policy
     
-    train_checkpointer = common.Checkpointer(
-        ckpt_dir=os.path.join(root_dir, 'train'),
-        agent=tf_agent,
-        global_step=global_step,
-        metrics=metric_utils.MetricsGroup(train_metrics, 'train_metrics'))
-    policy_checkpointer = common.Checkpointer(
-        ckpt_dir=os.path.join(root_dir, 'policy'),
-        policy=eval_policy,
-        global_step=global_step)
-    rb_checkpointer = common.Checkpointer(
-        ckpt_dir=os.path.join(root_dir, 'replay_buffer'),
-        max_to_keep=1,
-        replay_buffer=replay_buffer)
     
     initial_collect_driver = dynamic_episode_driver.DynamicEpisodeDriver(
         tf_env,
         initial_collect_policy,
-        observers=replay_observer + train_metrics,
+        observers=replay_observer,
         num_episodes=initial_collect_episodes)
 
     collect_driver = dynamic_episode_driver.DynamicEpisodeDriver(
         tf_env,
         collect_policy,
-        observers=replay_observer + train_metrics,
+        observers=replay_observer,
         num_episodes=collect_episodes_per_iteration)
 
     if use_tf_functions:
@@ -253,237 +220,51 @@ def train():
           'with a random policy.', initial_collect_episodes)
         initial_collect_driver.run()
 
-    results = metric_utils.eager_compute(
-        eval_metrics,
-        eval_tf_env,
-        eval_policy,
-        num_episodes=num_eval_episodes,
-        train_step=env_steps.result(),
-        summary_writer=summary_writer,
-        summary_prefix='Eval',
-    )
-    if eval_metrics_callback is not None:
-        eval_metrics_callback(results, env_steps.result())
-    metric_utils.log_metrics(eval_metrics)
 
     time_step = None
     policy_state = collect_policy.get_initial_state(tf_env.batch_size)
+    
+    time_acc = 0
+    env_steps_before = env_steps.result().numpy()
+
+    # Prepare replay buffer as dataset with invalid transitions filtered.
+    def _filter_invalid_transition(trajectories, unused_arg1):
+      # Reduce filter_fn over full trajectory sampled. The sequence is kept only
+      # if all elements except for the last one pass the filter. This is to
+      # allow training on terminal steps.
+      return tf.reduce_all(~trajectories.is_boundary()[:-1])
+    dataset = replay_buffer.as_dataset(
+        sample_batch_size=batch_size,
+        num_steps=train_sequence_length+1).unbatch().filter(
+            _filter_invalid_transition).batch(batch_size).prefetch(5)
+    # Dataset generates trajectories with shape [Bx2x...]
+    iterator = iter(dataset)
+
+    def train_step():
+        experience, _ = next(iterator)
+        return tf_agent.train(experience)
+
+    if use_tf_functions:
+        train_step = common.function(train_step)
+
+    for _ in range(num_iterations):
+        start_env_steps = env_steps.result()
+        time_step, policy_state = collect_driver.run(
+            time_step=time_step,
+            policy_state=policy_state,
+        )
+        episode_steps = env_steps.result() - start_env_steps
+        # TODO(b/152648849)
+        for _ in range(episode_steps):
+            for _ in range(train_steps_per_iteration):
+                train_step()
+
+
+
 
 
 with tf.device("/cpu:0"):
     train()
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def calculate_u_metric(df, model, boundary=0.0):
-    print("evaluating policy")
-    with tf.device("/cpu:0"):
-        actions = np.argmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values).numpy(), axis=1)
-        assert not np.isnan(np.sum(actions))
-
-    #     probs = tf.nn.softmax(model(df[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
-    #     probs_df = pd.DataFrame(probs, columns=["0", "1"])
-    #     probs_df["probs_diff"] = probs_df["1"] - probs_df["0"]
-    #     probs_df["action"] = probs_df["probs_diff"] > boundary
-    #     probs_df["action"] = probs_df["action"].astype("int")
-
-        sum_of_actions = np.sum(actions)
-        print("np_sum(actions)", sum_of_actions)
-
-    #     df["action"] = probs_df["action"]
-        df["action"] = pd.Series(data=actions, index=df.index)
-        df["trade_reward"] = df["action"]*df["weight"]*df["resp"]
-        df["trade_reward_squared"] = df["trade_reward"]*df["trade_reward"]
-
-        tmp = df.groupby(["date"])[["trade_reward", "trade_reward_squared"]].agg("sum")
-
-        sum_of_pi = tmp["trade_reward"].sum()
-        sum_of_pi_x_pi = tmp["trade_reward_squared"].sum()
-
-        print("sum of pi: {sum_of_pi}".format(sum_of_pi = sum_of_pi) )
-
-        if sum_of_pi_x_pi == 0.0:
-            return 0, 0, 0
-
-        t = sum_of_pi/np.sqrt(sum_of_pi_x_pi) * np.sqrt(250/tmp.shape[0])
-        # print("t: {t}".format(t = t) )
-
-        u = np.min([np.max([t, 0]), 6]) * sum_of_pi
-        print("u: {u}".format(u = u) )
-
-        ratio_of_ones = sum_of_actions/len(actions)
-        
-        return t, u, ratio_of_ones
-
-
-# +
-# %%time
-
-agent = ACAgent(
-    actor_model=create_actor_model(),
-    critic_model=create_critic_model(),
-    avg_reward_step_size=avg_reward_step_size,
-    actor_step_size=actor_step_size,
-    critic_step_size=critic_step_size,
-    tau = tau
-)
-
-agent.train = tf.function(agent.train)
-agent.init = tf.function(agent.init)
-
-def run_experiment():
-    with mlflow.start_run():
-        
-        mlflow.set_tag("agent_type", "sac")
-        mlflow.log_param("actor_nn_layers", actor_nn_arch )
-        mlflow.log_param("critic_nn_layers", critic_nn_arch)
-        mlflow.log_param("avg_reward_step_size", avg_reward_step_size)
-        mlflow.log_param("actor_step_size", actor_step_size)
-        mlflow.log_param("critic_step_size", critic_step_size)
-        mlflow.log_param("critic_dropout", critic_dropout)
-        mlflow.log_param("actor_dropout", actor_dropout)
-        mlflow.log_param("tau", tau)
-        mlflow.log_param("reward_multiplicator", reward_multiplicator)
-        mlflow.log_param("negative_reward_multiplicator", negative_reward_multiplicator)
-    
-        t = time.localtime()
-        current_time = time.strftime("%H:%M:%S", t)
-        print(current_time)
-        for epoch in range(number_of_episodes):
-            time_step = tf_env.reset()
-            action = agent.init(time_step)
-            counter = 0
-            for _ in range(train.shape[0]):
-                time_step = tf_env.step(action)
-                action = agent.train(time_step)
-                counter += 1
-
-                if counter % 100000 == 0:
-                    t = time.localtime()
-                    current_time = time.strftime("%H:%M:%S", t)
-                    print(epoch, counter, current_time)
-                    t_eval, u_eval, ratio_of_ones_eval = calculate_u_metric(eval_df, agent.actor_model)
-                    t_train, u_train, ratio_of_ones_train = calculate_u_metric(train, agent.actor_model)
-                    mlflow.log_metrics({
-                        "t_eval": t_eval,
-                        "u_eval": u_eval,
-                        "t_train": t_train,
-                        "u_train": u_train,
-                        "ratio_of_ones_eval": ratio_of_ones_eval,
-                        "ratio_of_ones_train": ratio_of_ones_train
-                    })
-            agent.actor_model.save("./actor_model")         
-            subprocess.run(["zip", "-r", "model_{epoch}.zip".format(epoch=epoch), "actor_model"])
-            mlflow.log_artifact("model_{epoch}.zip".format(epoch=epoch))
-
-
-run_experiment()
-# -
-# ### Debugging
-
-# +
-# agent = ACAgent(
-#     actor_model=create_actor_model(),
-#     critic_model=create_critic_model(),
-#     avg_reward_step_size=avg_reward_step_size,
-#     actor_step_size=actor_step_size,
-#     critic_step_size=critic_step_size,
-#     verbose=True
-# )
-# time_step = tf_env.reset()
-# action = agent.init(time_step) 
-# print(action)
-
-# time_step = tf_env.step(action)
-# action = agent.train(time_step)
-# action
-# -
-
-agent.actor_model.summary()
-
-
-
-actor_model_test = keras.Sequential([
-    layers.Input(shape=4),
-    layers.Dense(
-        4,
-        activation="relu",
-        kernel_initializer=tf.keras.initializers.Constant(value=1)
-    ),
-    layers.Dense(
-        2,
-        kernel_initializer=tf.keras.initializers.Constant(value=1)
-    )
-])
-
-test_observation = tf.constant(np.array([[1, 1, 1, 1]]), dtype=np.float64)
-
-actor_model_test(test_observation)
-
-# +
-with tf.GradientTape() as tape:
-    grad = tape.gradient(
-        tf.math.log(tf.nn.softmax(actor_model_test(test_observation))[0][1]),
-        actor_model_test.trainable_variables
-    )
-    
-grad
-# -
-
-actor_model_test(test_observation)[0][1]
-
-agent.actor_model.save("model_2")
-
-calculate_u_metric(train, agent.actor_model)
-
-calculate_u_metric(train, agent.actor_model)
-
-calculate_u_metric(train, agent.actor_model, boundary=0.9)
-
-probs = tf.nn.softmax(agent.actor_model(train[["f_{i}".format(i=i) for i in range(40)] + ["weight"]].values)).numpy()
-
-probs_ds = pd.DataFrame(data=probs, columns=["0", "1"])
-
-probs_ds["prob_diff"] = probs_ds["1"] - probs_ds["0"]
-
-probs_ds["action"] = probs_ds["prob_diff"] > 0.8
-
-probs_ds["action"] = probs_ds["action"].astype("int")
-
-probs_ds["action"].sum()
-
-tf.constant(3, dtype=np.float32)
-
-b = tf.Variable(8, dtype=np.float32, name="b", trainable=False)
-
-b.assign(9)
-
-b
-
-np.int
-
-timestep= train_py_env.reset()
-
-timestep.reward
 
 
