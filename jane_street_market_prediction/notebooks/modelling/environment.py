@@ -218,6 +218,89 @@ class MarketEnvContinuous(py_environment.PyEnvironment):
         return time_step
 
 
+class MarketEnvDaily(py_environment.PyEnvironment):
+    def __init__(self, **kwargs):
+
+        self.trades = kwargs.get("trades")
+        self.features = kwargs.get("features")
+        self.reward_column = kwargs.get("reward_column")
+        self.weight_column = kwargs.get("weight_column")
+        self.discount = kwargs.get("discount", 1)
+        self.reward_multiplicator = kwargs.get("reward_multiplicator", 1)
+        self.negative_reward_multiplicator = kwargs.get("negative_reward_multiplicator", 1)
+        self.include_weight = kwargs.get("include_weight", True)
+        self.unique_dates = self.trades["date"].unique()
+
+        self.selected_date = np.random.choice(self.unique_dates)
+        self.active_day_trades = self.trades[self.trades["date"] == self.selected_date]
+
+        self.counter = 0
+
+        self._action_spec = array_spec.BoundedArraySpec(
+            shape=(),
+            dtype=np.int32,
+            minimum=0,
+            maximum=1,
+            name="action"
+        )
+
+        self._observation_spec = array_spec.ArraySpec(
+            shape=(len(self.features),),
+            dtype=np.float32,
+            name='observation'
+        )
+
+        self._state = np.array(self.active_day_trades.iloc[self.counter][self.features].values, dtype=np.float32)
+
+        self._episode_ended = False
+
+    def action_spec(self):
+        return self._action_spec
+
+    def observation_spec(self):
+        return self._observation_spec
+
+    def _reset(self):
+        self.counter = 0
+        self.selected_date = np.random.choice(self.unique_dates)
+        self.active_day_trades = self.trades[self.trades["date"] == self.selected_date]
+
+        self._state = np.array(self.active_day_trades.iloc[self.counter][self.features].values, dtype=np.float32)
+        self._episode_ended = False
+        return ts.restart(self._state)
+
+    def _step(self, action):
+
+        if self._episode_ended:
+            return self.reset()
+
+        if self.counter == (len(self.active_day_trades) - 2):
+            self._episode_ended = True
+
+        self._state = self.active_day_trades.iloc[self.counter + 1][self.features].values
+
+        if self.include_weight:
+            reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column]*self.trades.iloc[self.counter][self.weight_column]
+        else:
+            reward = 0 if action == 0 else self.trades.iloc[self.counter][self.reward_column]
+
+        if reward > 0:
+            reward = reward * self.reward_multiplicator
+
+        if reward < 0:
+            reward = reward * self.negative_reward_multiplicator
+
+        if self._episode_ended:
+            time_step = ts.termination(np.array(self._state, dtype=np.float32), np.array(reward, dtype=np.float32))
+        else:
+            time_step = ts.transition(np.array(self._state, dtype=np.float32), np.array(reward, dtype=np.float32),
+                                      discount=float(self.discount))
+
+        self.counter += 1
+
+        return time_step
+
+
 class MarketEnvSimplified(py_environment.PyEnvironment):
     def __init__(self, **kwargs):
         

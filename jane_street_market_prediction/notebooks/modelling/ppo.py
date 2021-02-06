@@ -45,29 +45,34 @@ import mlflow
 
 # ### Environments
 
-from environment import MarketEnvWithRiskAppetite
+from environment import MarketEnvDaily
 
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
 # +
-discount = 0.75
+reward_multiplicator = 100
+negative_reward_multiplicator = 103.91
+discount = 0.1
 
-eval_df = eval_df[eval_df["date"] < 420]
-train_py_env = MarketEnvWithRiskAppetite(
+train_py_env = MarketEnvDaily(
     trades = train,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=discount
+    discount=discount,
+    reward_multiplicator = reward_multiplicator,
+    negative_reward_multiplicator = negative_reward_multiplicator
 )
 
-val_py_env = MarketEnvWithRiskAppetite(
+val_py_env = MarketEnvDaily(
     trades = eval_df,
-    features = ["f_{i}".format(i=i) for i in range(40)] + ["weight"],
+    features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
     weight_column = "weight",
-    discount=discount
+    discount=discount,
+    reward_multiplicator = 1,
+    negative_reward_multiplicator = 1
 )
 
 tf_env = tf_py_environment.TFPyEnvironment(train_py_env)

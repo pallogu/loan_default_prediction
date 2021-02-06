@@ -21,6 +21,7 @@ from tf_agents.drivers import dynamic_episode_driver
 from tf_agents.environments import parallel_py_environment
 from tf_agents.environments import suite_dm_control
 from tf_agents.environments import tf_py_environment
+from tf_agents.environments import batched_py_environment
 from tf_agents.environments import wrappers
 from tf_agents.eval import metric_utils
 from tf_agents.metrics import tf_metrics
@@ -120,16 +121,8 @@ def train():
     num_eval_episodes=30
     eval_interval=10000
 
-    log_interval=1000
-    summaries_flush_secs=10
     debug_summaries=False
     summarize_grads_and_vars=False
-    root_dir = "./"
-    
-    summary_writer = tf.compat.v2.summary.create_file_writer(
-    root_dir, flush_millis=summaries_flush_secs * 1000)
-    summary_writer.set_as_default()
-
 
     global_step = tf.compat.v1.train.get_or_create_global_step()
     
@@ -185,15 +178,13 @@ def train():
     replay_observer = [replay_buffer.add_batch]
     
     env_steps = tf_metrics.EnvironmentSteps(prefix='Train')
-    average_return = tf_metrics.AverageReturnMetric(
-        prefix='Train',
-        buffer_size=num_eval_episodes,
-        batch_size=tf_env.batch_size)
 
     
     eval_policy = greedy_policy.GreedyPolicy(tf_agent.policy)
+
     initial_collect_policy = random_tf_policy.RandomTFPolicy(
         tf_env.time_step_spec(), tf_env.action_spec())
+
     collect_policy = tf_agent.collect_policy
     
     
