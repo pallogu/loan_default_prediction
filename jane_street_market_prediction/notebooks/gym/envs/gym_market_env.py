@@ -2,6 +2,7 @@ import gym
 from gym import spaces
 
 import pandas as pd
+import numpy as np
 
 class CustomEnv(gym.Env):
     """Custom Environment that follows gym interface"""
@@ -14,7 +15,6 @@ class CustomEnv(gym.Env):
         self.features = kwargs.get("features")
         self.reward_column = kwargs.get("reward_column")
         self.weight_column = kwargs.get("weight_column")
-        self.discount = kwargs.get("discount", 1)
         self.reward_multiplicator = kwargs.get("reward_multiplicator", 1)
         self.negative_reward_multiplicator = kwargs.get("negative_reward_multiplicator", 1)
         self.include_weight = kwargs.get("include_weight", True)
@@ -29,7 +29,7 @@ class CustomEnv(gym.Env):
         
         self.action_space = spaces.Discrete(2)
         # Example for using image as input (can be channel-first or channel-last):
-        self.observation_space = spaces.Box(shape=(len(self.features),), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-100, high=100, shape=(len(self.features),), dtype=np.float32)
 
     def step(self, action):
         if self.counter == (len(self.active_day_trades) - 2):
@@ -71,7 +71,7 @@ class CustomEnv(gym.Env):
         return observation  # reward, done, info can't be included
     
     def render(self, mode='human'):
-        ...
+        pass
         
     def close (self):
-        ...
+        pass
