@@ -129,7 +129,7 @@ class EvaluationCallback(BaseCallback):
         pass
     
     def calculate_u_metric(self, df):
-        actions = self.model.predict(df[[c for c in df.columns if "f_" in c] + ["feature_0","weight"]].values)[0]
+        actions = self.model.predict(df[[c for c in df.columns if "f_" in c] + ["feature_0","weight"]].values, deterministic=True)[0]
         assert not np.isnan(np.sum(actions))
 
         sum_of_actions = np.sum(actions)
@@ -167,21 +167,17 @@ evaluation_callback = EvaluationCallback(verbose=0, eval_df=eval_df, train_df=tr
 # %%time
 with mlflow.start_run():
     policy_kwargs = dict(act_fun=tf.nn.swish, net_arch=[128, 128, 64, 32])
-    gamma=0.1
-    learning_rate=1e-5
+    gamma=0.2
+    learning_rate=1e-6
     
     mlflow.set_tag("agent_type", "PPO")
     mlflow.log_param("policy", "mlp")
     mlflow.log_param("policy_kwargs", policy_kwargs)
     mlflow.log_param("gamma", gamma)
     mlflow.log_param("learning_rate", learning_rate)
-    model = PPO2(MlpPolicy, train_env, verbose=0, gamma=gamma, learning_rate=learning_rate, policy_kwargs=policy_kwargs)
-    model.learn(total_timesteps=1000000, callback=evaluation_callback)
+#     model = PPO2(MlpPolicy, train_env, verbose=0, gamma=gamma, learning_rate=learning_rate, policy_kwargs=policy_kwargs)
+    model.learn(total_timesteps=10000000, callback=evaluation_callback)
 
-obs = env.reset()
-for i in range(1000):
-    action, _states = model.predict(obs)
-    obs, rewards, dones, info = env.step(action)
-    env.render()
+model.predict(eval_df[[c for c in eval_df.columns if "f_" in c] + ["feature_0","weight"]].values, deterministic=True)[0]
 
 
