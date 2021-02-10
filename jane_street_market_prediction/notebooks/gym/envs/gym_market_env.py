@@ -9,7 +9,7 @@ class MarketEnvDaily(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, **kwargs):
-        super(CustomEnv, self).__init__()
+        super(MarketEnvDaily, self).__init__()
         
         self.trades = kwargs.get("trades")
         self.features = kwargs.get("features")
@@ -82,7 +82,7 @@ class MarketEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, **kwargs):
-        super(CustomEnv, self).__init__()
+        super(MarketEnv, self).__init__()
         
         self.trades = kwargs.get("trades")
         self.features = kwargs.get("features")
@@ -123,7 +123,6 @@ class MarketEnv(gym.Env):
             done = False
             
         info = {
-            "day": self.selected_date,
             "reward": reward
         }
 

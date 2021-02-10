@@ -11,7 +11,7 @@ from stable_baselines.common.vec_env import DummyVecEnv
 from stable_baselines import PPO2
 from stable_baselines.common.callbacks import BaseCallback
 
-from envs.gym_market_env import CustomEnv
+from envs.gym_market_env import MarketEnv
 import mlflow
 
 import tensorflow as tf
@@ -21,11 +21,10 @@ train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
 # +
-discount = 0.2
-reward_multiplicator = 144.5
-negative_reward_multiplicator = 140.6
+reward_multiplicator = 100
+negative_reward_multiplicator = 100
 
-train_py_env = CustomEnv(
+train_py_env = MarketEnv(
     trades = train,
     features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
@@ -35,7 +34,7 @@ train_py_env = CustomEnv(
     negative_reward_multiplicator = negative_reward_multiplicator
 )
 
-eval_py_env = CustomEnv(
+eval_py_env = MarketEnv(
     trades = train,
     features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"],
     reward_column = "resp",
@@ -112,7 +111,7 @@ class EvaluationCallback(BaseCallback):
                     "u_train": u_train,
                     "ratio_of_ones_eval": ratio_of_ones_eval,
                     "ratio_of_ones_train": ratio_of_ones_train
-                })
+                }, step=self.step)
             
         return True
 
@@ -167,7 +166,7 @@ evaluation_callback = EvaluationCallback(verbose=0, eval_df=eval_df, train_df=tr
 # %%time
 with mlflow.start_run():
     policy_kwargs = dict(act_fun=tf.nn.swish, net_arch=[128, 128, 64, 32])
-    gamma=0.2
+    gamma=0.01
     learning_rate=1e-6
     
     mlflow.set_tag("agent_type", "PPO")
