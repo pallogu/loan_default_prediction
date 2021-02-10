@@ -32,7 +32,13 @@ def run(n_timesteps = train.shape[0], seed=42, n_trials = 100):
     sampler = TPESampler(n_startup_trials=n_startup_trials, seed=seed)
     pruner = SuccessiveHalvingPruner(min_resource=1, reduction_factor=4, min_early_stopping_rate=0)
 
-    study = optuna.create_study(sampler=sampler, pruner=pruner, study_name=study_name, storage=storage_name)
+    study = optuna.create_study(
+        sampler=sampler,
+        pruner=pruner,
+        study_name=study_name,
+        storage=storage_name,
+        load_if_exists=True
+    )
 
     def param_sampler(trial:Trial):
         batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
@@ -69,7 +75,7 @@ def run(n_timesteps = train.shape[0], seed=42, n_trials = 100):
 
         num_layers = trial.suggest_categorical("num_layers", [1, 2, 3])
         net_arch = []
-        for i in num_layers:
+        for i in range(num_layers):
             l = trial.suggest_categorical("layer_{i}".format(i=i), [1, 2, 3])
             net_arch.append(l*len(features))
 
