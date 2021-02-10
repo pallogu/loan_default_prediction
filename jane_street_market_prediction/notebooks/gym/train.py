@@ -116,6 +116,9 @@ def run(n_timesteps = train.shape[0], seed=42, n_trials = 100):
         del model.env
         del model
 
+        if is_pruned:
+            raise optuna.exceptions.TrialPruned()
+
         return sum_of_t_coef
 
     try:
