@@ -119,7 +119,7 @@ def run(n_timesteps = train.shape[0], seed=42, n_trials = 100):
         if is_pruned:
             raise optuna.exceptions.TrialPruned()
 
-        return sum_of_t_coef
+        return float(sum_of_t_coef)
 
     try:
         study.optimize(objective, n_trials=n_trials)

@@ -15,7 +15,7 @@ class TrialEvalCallback(BaseCallback):
         self.train_df = train_df
         self.eval_freq = eval_freq
         self.eval_idx = 0
-        self.sum_of_t_coef = -100
+        self.sum_of_t_coef = -100.0
         self.is_pruned = False
 
     def _on_step(self):
@@ -25,7 +25,7 @@ class TrialEvalCallback(BaseCallback):
             t_train, u_train, ratio_of_ones_train = calculate_u_metric(self.train_df, self.model, verbose=1)
 
             self.sum_of_t_coef = t_eval + t_train
-            self.trial.report(-1 * (self.sum_of_t_coef), self.eval_idx)
+            self.trial.report(-1 * self.sum_of_t_coef, self.eval_idx)
             # Prune trial if need
             if self.trial.should_prune():
                 self.is_pruned = True
