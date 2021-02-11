@@ -16,6 +16,8 @@ def calculate_u_metric(df, model, verbose=0):
 
     sum_of_pi = tmp["trade_reward"].sum()
     sum_of_pi_x_pi = (tmp["trade_reward"] * tmp["trade_reward"]).sum()
+    if sum_of_pi_x_pi == 0:
+        return -1000, 0, 0
 
     t = sum_of_pi / np.sqrt(sum_of_pi_x_pi) * np.sqrt(250 / tmp.shape[0])
     u = np.min([np.max([t, 0]), 6]) * sum_of_pi
