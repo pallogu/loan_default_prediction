@@ -1,5 +1,6 @@
 import pandas as pd
 from pandas.testing import assert_frame_equal
+import numpy as np
 
 class ETL_1():
     def __init__(self, **kwargs):
@@ -51,7 +52,39 @@ actual = inpt_df.apply(etl_1.fillna_normalize, axis=1)
 
 assert_frame_equal(actual, expected, check_dtype=False)
 # -
+test = np.arange(25)
 
+np.sin(test/20.83333*2*3.1415928)
+
+np.cos(test/20.83333*2*3.1415928)
+
+
+
+
+
+np.pi
+
+
+
+
+
+
+
+
+
+# +
+class DateEncoder():
+    def __init__(self, **kwargs):
+        self.date_column = kwargs.get("date_column")
+        self.frequency = kwargs.get("frequency")
+        
+    def transform(self, row):
+        row["date_x"] = np.sin(row[self.date_column]/self.frequency*2*np.pi)
+        row["date_y"] = np.cos(row[self.date_column]/self.frequency*2*np.pi)
+        return row
+        
+        
+# -
 
 
 class ETL_2():

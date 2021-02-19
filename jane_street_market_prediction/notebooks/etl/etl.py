@@ -12,7 +12,7 @@ import numpy as np
 import pickle
 import swifter
 
-from ETLc import ETL_1, ETL_2
+from ETLc import ETL_1, ETL_2, DateEncoder
 # -
 
 # ## Data Imports
@@ -37,6 +37,12 @@ rest_cols = [column for column in train.columns if column not in feats]
 train_mean = train.mean()
 train_stddev = train.std()
 
+# ## Removing rows without weight
+
+train = train[train["weight"]!=0]
+
+valuation_data = valuation_data[valuation_data["weight"]!=0]
+
 # ## Define ETLs
 
 etl_1 = ETL_1(
@@ -56,6 +62,26 @@ with open("./etl_1.pkl", "rb") as f:
 
 # %%time
 train_trans_1  = train.swifter.apply(etl_1.fillna_normalize, axis=1)
+
+valuation_data_trans_1 = valuation_data.swifter.apply(etl_1.fillna_normalize, axis=1)
+
+# ## Date transformer
+
+date_encoder = DateEncoder(date_column="date", frequency=250/12)
+
+# %%time
+train_trans_2  = train_trans_1.swifter.apply(date_encoder.transform, axis=1)
+
+valuation_data_trans_2 = valuation_data_trans_1.swifter.apply(date_encoder.transform, axis=1)
+
+with open("./date_encoder.pkl", "wb") as f:
+    pickle.dump(date_encoder, f)
+
+train_trans_2.to_csv("./train_dataset_with_dates.csv", index=False)
+
+valuation_data_trans_2.to_csv("./val_dataset_with_dates.csv", index=False)
+
+# ## PCA
 
 pca = PCA(n_components=0.99)
 pca.fit(train_trans_1[feats].values)
