@@ -25,6 +25,8 @@ import mlflow
 
 import time
 
+import subprocess
+
 # -
 
 from tf_agents.policies.policy_saver import PolicySaver
@@ -37,11 +39,11 @@ from environment import MarketEnv
 train = pd.read_csv("../etl/train_dataset_after_pca.csv")
 eval_df = pd.read_csv("../etl/val_dataset_after_pca.csv")
 
-reward_multiplicator = 100
+reward_multiplicator = 120
 negative_reward_multiplicator = 103.9
 
 # +
-discount = 0.01
+discount = 0.25
 
 train_py_env = MarketEnv(
     trades = train,
@@ -260,4 +262,6 @@ run_experiment()
 
 calculate_u_metric(val_env, agent.policy)
 
+subprocess.run(["zip", "-r", "dqn_policy.zip", "dqn_policy"])
 
+mlflow.log_artifact("dqn_policy.zip")

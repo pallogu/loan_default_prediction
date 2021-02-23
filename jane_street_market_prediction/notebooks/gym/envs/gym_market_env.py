@@ -23,7 +23,7 @@ class MarketEnvDaily(gym.Env):
         self.selected_date = np.random.choice(self.unique_dates)
         self.active_day_trades = self.trades[self.trades["date"] == self.selected_date]
 
-        self.counter = 0
+        self.intraday_counter = 0
 
         self._episode_ended = False
         
@@ -32,16 +32,14 @@ class MarketEnvDaily(gym.Env):
         self.observation_space = spaces.Box(low=-100, high=100, shape=(len(self.features),), dtype=np.float32)
 
     def step(self, action):
-        if self.counter == (len(self.active_day_trades) - 2):
+        if self.intraday_counter == (len(self.active_day_trades) - 2):
             self._episode_ended = True
 
-        observation = self.active_day_trades.iloc[self.counter + 1][self.features].values
+        observation = self.active_day_trades.iloc[self.intraday_counter + 1][self.features].values
 
-        if self.include_weight:
-            reward = 0 if action == 0 else self.active_day_trades.iloc[self.counter][self.reward_column]*self.active_day_trades.iloc[self.counter][self.weight_column]
-        else:
-            reward = 0 if action == 0 else self.active_day_trades.iloc[self.counter][self.reward_column]
 
+        reward = 0 if action == 0 else self.active_day_trades.iloc[self.intraday_counter][self.reward_column]*self.active_day_trades.iloc[self.intraday_counter][self.weight_column]
+        
         if reward > 0:
             reward = reward * self.reward_multiplicator
 
@@ -58,15 +56,15 @@ class MarketEnvDaily(gym.Env):
             "reward": reward
         }
 
-        self.counter += 1
+        self.intraday_counter += 1
         return observation, reward, done, info
     
     def reset(self):
-        self.counter = 0
+        self.intraday_counter = 0
         self.selected_date = np.random.choice(self.unique_dates)
         self.active_day_trades = self.trades[self.trades["date"] == self.selected_date]
 
-        observation = np.array(self.active_day_trades.iloc[self.counter][self.features].values, dtype=np.float32)
+        observation = np.array(self.active_day_trades.iloc[self.intraday_counter][self.features].values, dtype=np.float32)
         self._episode_ended = False
         return observation  # reward, done, info can't be included
     

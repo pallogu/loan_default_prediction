@@ -2,7 +2,7 @@ from stable_baselines.common.callbacks import BaseCallback
 import mlflow
 import subprocess
 
-from common import calculate_u_metric
+from .common import calculate_u_metric
 
 class EvaluationCallback(BaseCallback):
     def __init__(self, verbose=0, eval_df=None, train_df=None, log_interval=10000, save_best=True):
@@ -88,4 +88,3 @@ class EvaluationCallback(BaseCallback):
 
         # subprocess.run(["zip", "-r", "model.zip", "magic"])
         mlflow.log_artifact("model.zip")
-        pass

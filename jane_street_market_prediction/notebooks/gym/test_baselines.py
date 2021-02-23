@@ -10,7 +10,7 @@ from stable_baselines.common.policies import MlpPolicy
 from stable_baselines.common.vec_env import DummyVecEnv
 
 from callbacks.EvaluationCallback import EvaluationCallback
-from envs.gym_market_env import MarketEnv
+from envs.gym_market_env import MarketEnvDaily
 
 # -
 
@@ -23,12 +23,11 @@ negative_reward_multiplicator = 100*1.0582972011771625
 
 features = [c for c in train.columns.values if "f_" in c] + ["feature_0", "weight"]
 
-train_py_env = MarketEnv(
+train_py_env = MarketEnvDaily(
     trades=train,
     features=features,
     reward_column="resp",
     weight_column="weight",
-    include_weight=True,
     reward_multiplicator=reward_multiplicator,
     negative_reward_multiplicator=negative_reward_multiplicator
 )
@@ -40,7 +39,7 @@ evaluation_callback = EvaluationCallback(verbose=0, eval_df=eval_df, train_df=tr
 # %%time
 with mlflow.start_run():
     num_features =len(features)
-    policy_kwargs = dict(act_fun=tf.nn.swish, net_arch=[3*num_features, 2*num_features, num_features])
+    policy_kwargs = dict(act_fun=tf.nn.swish, net_arch=[1024, 512, 256, 64])
 
     
     kwargs = {
